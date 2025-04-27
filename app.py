@@ -9,7 +9,7 @@ app = FastAPI()
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5500"],  # Dodaj adres frontendu
+    allow_origins=["*"],  # Dopisz swój frontendowy IP jeśli chcesz bardziej restrykcyjnie
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
