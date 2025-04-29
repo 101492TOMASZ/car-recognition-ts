@@ -4,7 +4,7 @@ from torchvision import models, transforms
 from PIL import Image
 
 # === KONFIGURACJA ===
-MODEL_PATH = r"model\car_model2.pth"  # Ścieżka do zapisanego modelu
+MODEL_PATH = r"model/car_model2.pth"  # Ścieżka do zapisanego modelu
 IMAGE_PATH = "cropped_car.jpg"  # Ścieżka do obrazu do predykcji
 
 # Wczytaj model
