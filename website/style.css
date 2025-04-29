@@ -1,0 +1,13 @@
+body{
+    background-color: #3a59d1;
+}
+header{
+    font-family: 'Times New Roman', Times, serif;
+    font-size: large;
+    text-align: center;
+    color:white;
+}
+section{
+    margin: auto;
+    text-align: center;
+}
