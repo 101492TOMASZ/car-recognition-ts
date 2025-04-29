@@ -1,13 +1,50 @@
 body{
     background-color: #3a59d1;
 }
+main{
+    background-color: #3a59d1;
+    height: 100%;
+    width: 80%;
+    margin: auto;
+}
 header{
     font-family: 'Times New Roman', Times, serif;
     font-size: large;
     text-align: center;
+    background-color:#3D90D7;
     color:white;
+    width: 100%;
+    border-radius: 10px;
+    
 }
 section{
+
     margin: auto;
     text-align: center;
+    height: 100%;
+    width: 100%;
+    background-color: #3D90D7;
+    border-radius: 10px;
+}
+footer{
+    text-align: center;
+    font-family: 'Times New Roman', Times, serif;
+    background-color: #3D90D7;
+    width: 100%;
+    border-radius: 10px;
+    margin: auto;
+}
+#uploadButton{
+    background-color: #7AC6D2;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+}
+#uploadButton.clicked{
+    background-color: #B5FCCD;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
 }
