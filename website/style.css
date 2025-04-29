@@ -43,7 +43,7 @@ footer{
     width: 50%;
     height: 50px;
 }
-#uploadButton:hover{
+#uploadButton:onclick{
     background-color: #c5c5c5;
     color: white;
   
