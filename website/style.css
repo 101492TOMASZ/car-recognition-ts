@@ -4,7 +4,7 @@ body{
 main{
     background-color: #3a59d1;
     height: 100%;
-    width: 80%;
+    width: 70%;
     margin: auto;
 }
 header{
@@ -40,11 +40,14 @@ footer{
     border: none;
     padding: 10px 20px;
     border-radius: 5px;
+    width: 50%;
+    height: 50px;
 }
-#uploadButton.clicked{
-    background-color: #B5FCCD;
+#uploadButton:hover{
+    background-color: #c5c5c5;
     color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 5px;
+  
+}
+#result{
+    color:white;
 }

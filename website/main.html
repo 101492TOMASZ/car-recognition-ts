@@ -37,7 +37,7 @@
                         console.log("File uploaded successfully:", data);
                         // Display the returned values on the frontend
                         const resultDiv = document.getElementById("result");
-                        resultDiv.innerHTML = `<p>Brand: ${data.brand}</p><p>Confidence: ${data.confidence}</p>`;
+                        resultDiv.innerHTML = `<p>${data.brand}</p><p>Pewność: ${data.confidence}</p>`;
                     })
                     .catch(error => {
                         console.error("Error uploading file:", error);
@@ -57,13 +57,15 @@
         <header>
             <h1>Jakie to auto?</h1>
         </header>
+        <div id="result"></div>
         <section>
             <input type="file" id="fileInput" accept=".jpg" />
-            <input type="button" id="uploadButton" value="Upload" />
-            <div id="result"></div>
+            <p><input type="button" id="uploadButton" value="Upload" /></p>
+            
+            
         </section>
         <footer>
-            <h5>Tomasz Słociński 2025</h5>
+            <h3>Tomasz Słociński 2025</h3>
         </footer>
     </main>
 
