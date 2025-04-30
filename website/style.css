@@ -1,53 +1,89 @@
-body{
-    background-color: #3a59d1;
-}
-main{
-    background-color: #3a59d1;
-    height: 100%;
-    width: 70%;
-    margin: auto;
-}
-header{
-    font-family: 'Times New Roman', Times, serif;
-    font-size: large;
-    text-align: center;
-    background-color:#3D90D7;
-    color:white;
-    width: 100%;
-    border-radius: 10px;
-    
-}
-section{
+/* Import eleganckiej czcionki (jeśli nie używasz Tailwinda do fontów) */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
 
-    margin: auto;
-    text-align: center;
-    height: 100%;
-    width: 100%;
-    background-color: #3D90D7;
-    border-radius: 10px;
+body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Inter', sans-serif;
+    background-color: #f9fafb;
+    color: #1f2937;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
 }
-footer{
+
+main {
     text-align: center;
-    font-family: 'Times New Roman', Times, serif;
-    background-color: #3D90D7;
+    padding: 2rem;
     width: 100%;
-    border-radius: 10px;
-    margin: auto;
+    max-width: 600px;
+    margin: 0 auto;
 }
-#uploadButton{
-    background-color: #7AC6D2;
+
+header h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    color: #111827;
+}
+
+header h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 0.5rem;
+}
+
+header h6 {
+    font-size: 0.95rem;
+    color: #6b7280;
+    margin-bottom: 2rem;
+}
+
+.uploadStyl {
+    display: inline-block;
+    background-color: #3b82f6;
+    color: white;
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    font-weight: 600;
+    margin-right: 1rem;
+    transition: background-color 0.2s ease;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.uploadStyl:hover {
+    background-color: #2563eb;
+}
+
+#uploadButton {
+    padding: 0.75rem 1.5rem;
+    background-color: #10b981;
     color: white;
     border: none;
-    padding: 10px 20px;
-    border-radius: 5px;
-    width: 50%;
-    height: 50px;
+    border-radius: 0.5rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
-#uploadButton:onclick{
-    background-color: #c5c5c5;
-    color: white;
-  
+
+#uploadButton:hover {
+    background-color: #059669;
 }
-#result{
-    color:white;
+
+#result {
+    margin-bottom: 2rem;
+    font-size: 1.1rem;
+    color: #1f2937;
+    font-weight: 500;
+}
+
+footer h3 {
+    font-size: 0.875rem;
+    color: #9ca3af;
+    margin-top: 3rem;
 }

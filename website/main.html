@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <link rel="stylesheet" source="style.css" href="style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
         document.addEventListener("DOMContentLoaded", function() {
             const fileInput = document.getElementById("fileInput");
@@ -56,11 +57,15 @@
     <main>
         <header>
             <h1>Jakie to auto?</h1>
+            <h3>Rozpoznawanie marki samochodu na podstawie zdjęcia</h3>
+            <h6>Wybierz zdjęcie samochodu, a my spróbujemy zgadnąć jego markę!</h6>
         </header>
-        <div id="result"></div>
+        
         <section>
-            <input type="file" id="fileInput" accept=".jpg" />
-            <p><input type="button" id="uploadButton" value="Upload" /></p>
+            <div id="result"></div>
+            <input type="file" id="fileInput" accept=".jpg" hidden />
+            <label class="uploadStyl" for="fileInput">Wybierz zdjęcie samochodu</label>
+            <input type="button" id="uploadButton" value="Upload" />
             
             
         </section>
