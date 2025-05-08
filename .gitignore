@@ -5,5 +5,5 @@ __pycache__/
 dataset/
 temp/
 *.pth
-model
+
 *.jpg
