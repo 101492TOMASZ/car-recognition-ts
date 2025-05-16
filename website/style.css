@@ -132,6 +132,16 @@ body.darkmode footer button svg {
     fill: #fff;
 }
 
+/* Stylowanie logo producenta */
+.brand-logo {
+    filter: invert(0%) brightness(0%) !important; /* czarne logo w trybie jasnym */
+    transition: filter 0.3s;
+}
+
+body.darkmode .brand-logo {
+    filter: invert(100%) brightness(200%) !important; /* białe logo w trybie ciemnym */
+}
+
 /* Responsywność */
 @media (max-width: 600px) {
     main {
