@@ -29,7 +29,7 @@
                     const formData = new FormData();
                     formData.append("file", file);
 
-                    fetch("http://192.168.55.107:8000/predict", { // Corrected URL to send POST to the correct endpoint
+                    fetch("http://localhost:8000/predict", { // Corrected URL to send POST to the correct endpoint
                         method: "POST",
                         body: formData
                     })
@@ -83,6 +83,35 @@
             themeSwitcher.addEventListener('click', () => {
                 document.body.classList.toggle('darkmode');
             });
+        });
+
+        document.addEventListener('DOMContentLoaded', function () {
+            // Sprawdzanie statusu API
+            const statusSpan = document.createElement('span');
+            statusSpan.style.fontSize = '12px';
+            statusSpan.style.display = 'block';
+            statusSpan.style.marginTop = '5px';
+            document.querySelector('footer h3').appendChild(statusSpan);
+
+            function checkApiStatus() {
+                fetch("http://localhost:8000/status")
+                    .then(response => response.json())
+                    .then(data => {
+                        const isOnline = data.status === "online";
+                        statusSpan.textContent = isOnline ? "online" : "offline";
+                        statusSpan.style.color = isOnline ? "#4CAF50" : "#f44336";
+                    })
+                    .catch(() => {
+                        statusSpan.textContent = "offline";
+                        statusSpan.style.color = "#f44336";
+                    });
+            }
+
+            // Sprawdź status od razu
+            checkApiStatus();
+
+            // Sprawdzaj status co sekundę
+            setInterval(checkApiStatus, 3000);
         });
     </script>
     <meta charset="UTF-8">

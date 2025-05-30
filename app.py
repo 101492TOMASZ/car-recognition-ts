@@ -7,6 +7,7 @@ import subprocess
 import gdown
 import os
 import sys
+import datetime
 
 # Uruchomienie download_model.py na starcie
 print("Sprawdzanie i pobieranie modelu...")
@@ -27,6 +28,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Endpoint sprawdzający status API
+@app.get("/status")
+async def check_status():
+    return {
+        "status": "online",
+        "message": "API is running",
+        "timestamp": datetime.datetime.now().isoformat()
+    }
 
 # Endpoint do przewidywania
 @app.post("/predict")
