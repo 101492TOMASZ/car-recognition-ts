@@ -1,14 +1,15 @@
 import sys
-import subprocess
-import time
-import requests
-from PyQt5.QtWidgets import (
-    QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QFileDialog, QHBoxLayout, QFrame, QMessageBox
-)
-from PyQt5.QtGui import QPixmap, QFont, QIcon
-from PyQt5.QtCore import Qt
-from database import Database
 import os
+from PIL import Image
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, 
+    QFileDialog, QFrame, QMessageBox
+)
+from PyQt5.QtGui import QPixmap, QFont
+from PyQt5.QtCore import Qt
+from predict import predict_image
+from database import Database
+from history_viewer import HistoryViewer
 
 class CarRecognitionApp(QWidget):
     def __init__(self):
@@ -54,7 +55,7 @@ class CarRecognitionApp(QWidget):
         
         # Przycisk z ikoną
         self.button = QPushButton(" Wybierz plik")
-        self.button.setIcon(QIcon.fromTheme("document-open"))
+        
         self.button.setStyleSheet("""
             QPushButton {
                 background-color: #4CAF50; color: white; font-size: 16px;
@@ -99,71 +100,63 @@ class CarRecognitionApp(QWidget):
         self.setLayout(main_layout)
 
     def choose_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Wybierz obraz", "", "Images (*.png *.jpg *.jpeg)")
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Image", "", "Images (*.png *.jpg *.jpeg)"
+        )
         if file_path:
-            self.img_label.setPixmap(QPixmap(file_path).scaled(
-                320, 200,
-                aspectRatioMode=Qt.AspectRatioMode.KeepAspectRatio,
-                transformMode=Qt.TransformationMode.SmoothTransformation
-            ))
-            self.result_label.setText("Rozpoznawanie...")
-            QApplication.processEvents()
-            with open(file_path, "rb") as f:
-                files = {"file": f}
-                try:
-                    r = requests.post("http://localhost:8000/predict", files=files)
-                    r.raise_for_status()
-                    data = r.json()
-                    
-                    # Zapisz wynik do bazy danych
-                    self.db.save_prediction(
-                        image_path=file_path,
-                        brand=data['brand'],
-                        confidence=data['confidence']
-                    )
-                    
-                    self.result_label.setStyleSheet("""
-                        background: #e8f5e9; color: #222; font-size: 18px;
-                        border-radius: 8px; padding: 16px; margin-top: 20px;
-                    """)
-                    self.result_label.setText(
-                        f"<b>Marka:</b> {data['brand']}<br>"
-                        f"<b>Pewność:</b> {data['confidence']:.2f}%<br>"
-                        f"<small>Zapisano w bazie danych</small>"
-                    )
-                except Exception as e:
-                    self.result_label.setStyleSheet("""
-                        background: #ffebee; color: #b71c1c; font-size: 16px;
-                        border-radius: 8px; padding: 16px; margin-top: 20px;
-                    """)
-                    self.result_label.setText("Błąd połączenia z serwerem lub predykcji.")
+            # Update image preview
+            pixmap = QPixmap(file_path)
+            scaled_pixmap = pixmap.scaled(
+                300, 200, 
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.img_label.setPixmap(scaled_pixmap)
+
+            try:
+                # Use predict.py for prediction
+                image = Image.open(file_path).convert('RGB')
+                result = predict_image(image)
+                
+                # Save to database
+                self.db.save_prediction(
+                    image_path=file_path,
+                    brand=result['brand'],
+                    confidence=result['confidence']
+                )
+
+                # Update result label
+                self.result_label.setStyleSheet("""
+                    QLabel {
+                        background: #e8f5e9;
+                        padding: 15px;
+                        border-radius: 5px;
+                        font-size: 14px;
+                    }
+                """)
+                self.result_label.setText(
+                    f"Brand: {result['brand']}\n"
+                    f"Confidence: {result['confidence']:.2f}%"
+                )
+            except Exception as e:
+                self.result_label.setStyleSheet("""
+                    QLabel {
+                        background: #ffebee;
+                        padding: 15px;
+                        border-radius: 5px;
+                        font-size: 14px;
+                    }
+                """)
+                self.result_label.setText(f"Error: {str(e)}")
 
     def show_history(self):
-        """Wyświetla okno z historią predykcji"""
+        """Wyświetla okno z historią predykcji w formie tabeli"""
         predictions = self.db.get_all_predictions()
-        history_text = "Historia predykcji:\n\n"
-        for pred in predictions:
-            _, img_path, brand, conf, timestamp = pred
-            history_text += f"Data: {timestamp}\n"
-            history_text += f"Plik: {os.path.basename(img_path)}\n"
-            history_text += f"Marka: {brand}\n"
-            history_text += f"Pewność: {conf:.2f}%\n"
-            history_text += "-" * 40 + "\n"
-        
-        msg = QMessageBox()
-        msg.setWindowTitle("Historia predykcji")
-        msg.setText(history_text)
-        msg.setStyleSheet("QMessageBox { min-width: 400px; }")
-        msg.exec_()
+        viewer = HistoryViewer(predictions)
+        viewer.exec_()
 
-if __name__ == "__main__":
-    # Start backend
-    server = subprocess.Popen([sys.executable, "-m", "uvicorn", "app:app"])
-    time.sleep(2)  # Daj serwerowi czas na start
+if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = CarRecognitionApp()
     window.show()
-    try:
-        app.exec_()
-    finally:
-        server.terminate()
+    sys.exit(app.exec_())
