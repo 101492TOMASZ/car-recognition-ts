@@ -45,13 +45,23 @@ def augment_image(img):
 
     # Obrót
     if random.random() < 0.1:  # 10% szansy
-        img = img.rotate(random.uniform(-25, 25))  # Większy zakres obrotu
+        angle = random.uniform(-25, 25)
+        if isinstance(img, Image.Image):
+            img = img.rotate(angle)
+        else:
+            img = F.rotate(img, angle)
 
     # Odbicie poziome
     if random.random() < 0.5:  # 50% szansy
-        img = F.hflip(img)
+        from PIL import ImageOps
+        if not isinstance(img, Image.Image):
+            img = F.to_pil_image(img)
+        img = ImageOps.mirror(img)
 
-    # Symulacja mgły
+    # Upewnij się, że wynik to PIL Image
+    if not isinstance(img, Image.Image):
+        img = F.to_pil_image(img)
+    return img
     if random.random() < 0.1:  # 50% szansy
         img = img.filter(ImageFilter.GaussianBlur(radius=random.uniform(1, 3)))  # Większe rozmycie
 
