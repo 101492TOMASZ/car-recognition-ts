@@ -2,9 +2,16 @@ import torch
 from torch import nn
 from torchvision import models, transforms
 from PIL import Image
+import sys
+import os
 
 # === KONFIGURACJA ===
-MODEL_PATH = r"model/car_model2.pth"  # Ścieżka do zapisanego modelu
+def resource_path(relative_path):
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return os.path.join(getattr(sys, '_MEIPASS'), relative_path)
+    return os.path.join(os.path.abspath('.'), relative_path)
+
+MODEL_PATH = resource_path('model/car_model2.pth')  # Always use this for torch.load
 IMAGE_PATH = "cropped_car.jpg"  # Ścieżka do obrazu do predykcji
 
 # Wczytaj model
