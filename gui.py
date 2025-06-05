@@ -52,7 +52,8 @@ class CarRecognitionApp(QWidget):
     def init_ui(self):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setWindowTitle("Car Recognition")
-        self.setFixedSize(800, 800)  # Change from setMinimumSize to setFixedSize
+        self.setMinimumSize(800, 800)  # Minimalny rozmiar
+        self.setMaximumSize(1920, 1200)  # Opcjonalnie: ogranicz maksymalny rozmiar
 
         # Custom top bar with - and X buttons
         top_bar = QHBoxLayout()
