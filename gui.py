@@ -12,6 +12,9 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QPoint, QThread, pyqtSignal, QT
 from predict import predict_image
 from database import Database
 from history_viewer import HistoryViewer
+from utils.logger import get_logger
+
+log = get_logger('gui')
 
 
 class BatchResultDialog(QDialog):
@@ -221,10 +224,13 @@ QPushButton:pressed {{
             self, "Wybierz zdjęcie(-a)", "", "Images (*.png *.jpg *.jpeg)"
         )
         if not file_paths:
+            log.debug("No file selected")
             return
         if len(file_paths) == 1:
+            log.info("Selected single file for prediction: %s", file_paths[0])
             self.process_single_image(file_paths[0])
         else:
+            log.info("Selected %d files for batch processing", len(file_paths))
             self.process_batch_images(file_paths)
 
     def batch_test(self):
@@ -237,11 +243,14 @@ QPushButton:pressed {{
         self.process_batch_images(file_paths)
 
     def process_single_image(self, file_path):
+        log.info("Processing image: %s", file_path)
         try:
             image = Image.open(file_path).convert('RGB')
         except Exception as e:
             self.show_error(f"Nie można otworzyć obrazu: {e}")
+            log.exception("Failed to open image %s", file_path)
             return
+
         self.original_image = image
         self._orig_pixmap = self.pil2pixmap(image)
         self._heatmap_pixmap = None
@@ -268,6 +277,7 @@ QPushButton:pressed {{
                 brand=result['brand'],
                 confidence=result['confidence']
             )
+            log.info("Saved prediction id=%s brand=%s confidence=%.2f", self.current_prediction_id, result['brand'], result['confidence'])
             self.result_label.setStyleSheet("""
                 background-color: #e8f5e9;
                 color: #222;
@@ -297,6 +307,7 @@ QPushButton:pressed {{
                 font-weight: bold;
             """)
             self.result_label.setText(str(e))
+            log.warning("ValueError during prediction of %s: %s", file_path, e)
         except Exception as e:
             self.current_prediction_id = None
             self._heatmap_visible = False
@@ -312,6 +323,7 @@ QPushButton:pressed {{
                 font-weight: bold;
             """)
             self.result_label.setText(f"Error: {str(e)}")
+            log.exception("Unhandled error during processing of %s", file_path)
 
     def process_batch_images(self, file_paths):
         results = {}

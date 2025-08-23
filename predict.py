@@ -1,7 +1,12 @@
+import time
+import logging
 import torch
 from torch import nn
 from torchvision import models, transforms
 from PIL import Image
+from utils.logger import get_logger
+
+log = get_logger('predict')
 import sys
 import os
 import numpy as np
@@ -26,6 +31,7 @@ checkpoint = torch.load(MODEL_PATH, map_location=device)
 model.load_state_dict(checkpoint["model_state_dict"])
 model = model.to(device)
 model.eval()
+log.info(f"Loaded model from %s on device %s", MODEL_PATH, device)
 
 # Mapowanie etykiet
 label_to_idx = checkpoint['label_to_idx']
@@ -98,6 +104,7 @@ def predict_image(image):
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
+    t0 = time.perf_counter()
     # Keep a copy of the original image and size
     orig_image = image.convert('RGB')
     orig_size = orig_image.size  # (width, height)
@@ -115,9 +122,7 @@ def predict_image(image):
     predicted_id = brand_to_id.get(predicted_class, "Nieznane ID")
     confidence_percent = confidence.item() * 100
 
-    print(f"\nModel przewiduje: {predicted_class}")
-    print(f"ID przewidywane: {predicted_id}")
-    print(f"Pewność: {confidence_percent:.2f}%")
+    log.info("Model przewiduje: %s (id=%s) pewność=%.2f%%", predicted_class, predicted_id, confidence_percent)
 
     # Compute Grad-CAM: use a tensor that requires grad
     image_tensor_for_cam = image_tensor.clone().detach().requires_grad_(True)
@@ -130,9 +135,12 @@ def predict_image(image):
     heatmap_uint8 = np.uint8(heatmap_rgb * 255)
     heatmap_img = Image.fromarray(heatmap_uint8).resize(orig_size, resample=Image.BILINEAR)
 
+  
     # Blend heatmap with original image (both RGB)
     blended = Image.blend(orig_image, heatmap_img.convert('RGB'), alpha=0.5)
 
+    t1 = time.perf_counter()
+    log.info("Prediction finished in %.1f ms", (t1 - t0) * 1000)
     return {
         "brand": predicted_class,
         "confidence": confidence_percent,
