@@ -293,22 +293,50 @@ class HistoryViewer(QDialog):
             file_path += '.pdf'
 
         try:
-            # Register Arial font for Unicode/Polish support (Windows)
+            # Try to register a sensible cross-platform font.
+            # On Linux prefer DejaVu Sans (good Unicode coverage). If not found,
+            # try several common fallback TTFs. If none are available, fall back
+            # to ReportLab's built-in Helvetica which doesn't require a TTF file.
             import platform
-            if platform.system() == "Windows":
-                arial_path = os.path.join(os.environ['WINDIR'], 'Fonts', 'arial.ttf')
-            else:
-                arial_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"  # fallback for Linux
-            pdfmetrics.registerFont(TTFont("Arial", arial_path))
-            reportlab.rl_config.TTFSearchPath.append(os.path.dirname(arial_path))
+            font_name = None
+            try:
+                if platform.system() == "Windows":
+                    arial_path = os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'Fonts', 'arial.ttf')
+                    if os.path.exists(arial_path):
+                        pdfmetrics.registerFont(TTFont("Arial", arial_path))
+                        font_name = "Arial"
+                else:
+                    candidates = [
+                        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+                        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+                    ]
+                    found = None
+                    for p in candidates:
+                        if os.path.exists(p):
+                            found = p
+                            break
+                    if found:
+                        font_name = "AppSans"
+                        pdfmetrics.registerFont(TTFont(font_name, found))
+                        reportlab.rl_config.TTFSearchPath.append(os.path.dirname(found))
+            except Exception as fe:
+                # If font registration fails, we'll fall back to a built-in font
+                print(f"Font registration failed: {fe}")
+
+            if not font_name:
+                # Use a built-in font that always exists in reportlab.
+                font_name = "Helvetica"
+
             # Prepare data for the table
             data: list[list[Any]] = [["ID", "Data i czas", "Marka", "Pewność (%)", "Jakość", "Obraz"]]
             row_heights = [30]
             image_width = 40 * mm
             image_height = 30 * mm
             styles = getSampleStyleSheet()
-            styles["Normal"].fontName = "Arial"
-            styles["Title"].fontName = "Arial"
+            styles["Normal"].fontName = font_name
+            styles["Title"].fontName = font_name
             for item in selected_items:
                 index = self.list_widget.row(item)
                 if index < 0 or index >= len(self.predictions):
@@ -334,7 +362,7 @@ class HistoryViewer(QDialog):
             doc = SimpleDocTemplate(file_path, pagesize=A4)
             table = Table(data, colWidths=[20*mm, 35*mm, 35*mm, 25*mm, 35*mm, image_width], rowHeights=row_heights)
             table.setStyle(TableStyle([
-                ('FONTNAME', (0, 0), (-1, -1), 'Arial'),
+                ('FONTNAME', (0, 0), (-1, -1), font_name),
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0078d4')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
