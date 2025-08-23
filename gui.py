@@ -17,6 +17,32 @@ from utils.logger import get_logger
 log = get_logger('gui')
 
 
+class PredictionWorker(QThread):
+    finished_signal = pyqtSignal(object)
+    error_signal = pyqtSignal(str)
+
+    def __init__(self, pil_image):
+        super().__init__()
+        self.pil_image = pil_image
+
+    def run(self):
+        try:
+            # import here to avoid module-level cycles
+            from predict import predict_image
+            res = predict_image(self.pil_image)
+            # Convert heatmap to bytes (PNG) if present
+            heatmap = res.get('heatmap')
+            if heatmap is not None:
+                import io
+                buf = io.BytesIO()
+                heatmap.save(buf, format='PNG')
+                res['heatmap_bytes'] = buf.getvalue()
+                del res['heatmap']
+            self.finished_signal.emit(res)
+        except Exception as e:
+            self.error_signal.emit(str(e))
+
+
 class BatchResultDialog(QDialog):
     def __init__(self, results, parent=None):
         super().__init__(parent)
@@ -48,6 +74,8 @@ class CarRecognitionApp(QWidget):
         self._orig_pixmap = None
         self._heatmap_pixmap = None
         self._heatmap_visible = False
+        # background prediction thread handle
+        self._pred_thread = None
         self.init_ui()
         self.setStyleSheet("""
             QWidget {
@@ -250,7 +278,7 @@ QPushButton:pressed {{
             self.show_error(f"Nie można otworzyć obrazu: {e}")
             log.exception("Failed to open image %s", file_path)
             return
-
+        # set preview immediately
         self.original_image = image
         self._orig_pixmap = self.pil2pixmap(image)
         self._heatmap_pixmap = None
@@ -258,72 +286,20 @@ QPushButton:pressed {{
         self.show_heatmap_btn.setText("Pokaż heatmapę")
         QTimer.singleShot(0, self.update_display_pixmap)
 
-        try:
-            result = predict_image(self.original_image)
-            self.heatmap_img = result.get('heatmap')
-            if self.heatmap_img is not None:
-                # ensure heatmap matches original image size
-                self.heatmap_img = self.heatmap_img.resize(self.original_image.size, Image.BILINEAR)
-                base = self.original_image.convert("RGBA")
-                heatmap_rgba = self.heatmap_img.convert("RGBA")
-                blended = Image.blend(base, heatmap_rgba, alpha=0.5)
-                self._heatmap_pixmap = self.pil2pixmap(blended)
-                self.show_heatmap_btn.show()
-            else:
-                self.show_heatmap_btn.hide()
+        # Run prediction in background thread to keep UI responsive
+        if self._pred_thread is not None and self._pred_thread.isRunning():
+            log.debug('Prediction thread already running; ignoring request')
+            return
 
-            self.current_prediction_id = self.db.save_prediction(
-                image_path=file_path,
-                brand=result['brand'],
-                confidence=result['confidence']
-            )
-            log.info("Saved prediction id=%s brand=%s confidence=%.2f", self.current_prediction_id, result['brand'], result['confidence'])
-            self.result_label.setStyleSheet("""
-                background-color: #e8f5e9;
-                color: #222;
-                border-radius: 8px;
-                padding: 20px;
-                margin-top: 20px;
-                font-size: 18px;
-                font-weight: bold;
-            """)
-            self.result_label.setText(
-                f"Brand: {result['brand']}\n"
-                f"Confidence: {result['confidence']:.2f}%"
-            )
-            QTimer.singleShot(250, lambda: self.ask_for_feedback(self.current_prediction_id, result['brand'], result['confidence']))
-        except ValueError as e:
-            self.current_prediction_id = None
-            self._heatmap_visible = False
-            self.show_heatmap_btn.hide()
-            self.show_heatmap_btn.setText("Pokaż heatmapę")
-            self.result_label.setStyleSheet("""
-                background-color: #ffebee;
-                color: #b71c1c;
-                border-radius: 8px;
-                padding: 20px;
-                margin-top: 20px;
-                font-size: 18px;
-                font-weight: bold;
-            """)
-            self.result_label.setText(str(e))
-            log.warning("ValueError during prediction of %s: %s", file_path, e)
-        except Exception as e:
-            self.current_prediction_id = None
-            self._heatmap_visible = False
-            self.show_heatmap_btn.hide()
-            self.show_heatmap_btn.setText("Pokaż heatmapę")
-            self.result_label.setStyleSheet("""
-                background-color: #ffebee;
-                color: #b71c1c;
-                border-radius: 8px;
-                padding: 20px;
-                margin-top: 20px;
-                font-size: 18px;
-                font-weight: bold;
-            """)
-            self.result_label.setText(f"Error: {str(e)}")
-            log.exception("Unhandled error during processing of %s", file_path)
+        # create worker
+        self._pred_thread = PredictionWorker(image)
+        self._pred_thread.finished_signal.connect(self._on_prediction_done)
+        self._pred_thread.error_signal.connect(self._on_prediction_error)
+        # disable UI elements while running
+        self.button.setEnabled(False)
+        self.show_heatmap_btn.setEnabled(False)
+        self.result_label.setText('Processing...')
+        self._pred_thread.start()
 
     def process_batch_images(self, file_paths):
         results = {}
@@ -344,6 +320,72 @@ QPushButton:pressed {{
                 results[os.path.basename(file_path)] = {'brand': f"Błąd: {e}", 'confidence': 0}
         dlg = BatchResultDialog(results, self)
         dlg.exec_()
+
+    def _on_prediction_done(self, result):
+        """Handle successful prediction from worker thread."""
+        # re-enable ui
+        self.button.setEnabled(True)
+        self.show_heatmap_btn.setEnabled(True)
+
+        result = result or {}
+        # Decode heatmap from bytes if present
+        heatmap_bytes = result.get('heatmap_bytes')
+        self.heatmap_img = None
+        if heatmap_bytes is not None:
+            try:
+                import io
+                from PIL import Image as PILImage
+                self.heatmap_img = PILImage.open(io.BytesIO(heatmap_bytes)).convert('RGBA')
+                self.heatmap_img = self.heatmap_img.resize(self.original_image.size, PILImage.BILINEAR)
+                base = self.original_image.convert("RGBA")
+                blended = PILImage.blend(base, self.heatmap_img, alpha=0.5)
+                self._heatmap_pixmap = self.pil2pixmap(blended)
+                self.show_heatmap_btn.show()
+            except Exception:
+                log.exception('Failed to prepare heatmap image')
+                self.show_heatmap_btn.hide()
+        else:
+            self.show_heatmap_btn.hide()
+
+        try:
+            self.current_prediction_id = self.db.save_prediction(
+                image_path=None,
+                brand=result.get('brand', 'Błąd'),
+                confidence=result.get('confidence', 0)
+            )
+            log.info("Saved prediction id=%s brand=%s confidence=%.2f", self.current_prediction_id, result.get('brand'), result.get('confidence'))
+        except Exception:
+            log.exception('Failed to save prediction to DB')
+
+        self.result_label.setStyleSheet("""
+            background-color: #e8f5e9;
+            color: #222;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+            font-size: 18px;
+            font-weight: bold;
+        """)
+        self.result_label.setText(
+            f"Brand: {result.get('brand','?')}\n"
+            f"Confidence: {result.get('confidence',0):.2f}%"
+        )
+        QTimer.singleShot(250, lambda: self.ask_for_feedback(self.current_prediction_id, result.get('brand'), result.get('confidence')))
+
+    def _on_prediction_error(self, err_msg):
+        self.button.setEnabled(True)
+        self.show_heatmap_btn.setEnabled(True)
+        log.error('Prediction worker error: %s', err_msg)
+        self.result_label.setStyleSheet("""
+            background-color: #ffebee;
+            color: #b71c1c;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+            font-size: 18px;
+            font-weight: bold;
+        """)
+        self.result_label.setText(f"Error: {err_msg}")
 
     def show_heatmap(self):
         if self.original_image is None:

@@ -11,3 +11,6 @@ temp/
 build/
 dist/
 *.spec
+dataset_german
+dataset_clean
+tests/
