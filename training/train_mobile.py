@@ -35,6 +35,7 @@ def parse_args():
     p.add_argument("--resume", default=None, help="Path to checkpoint to resume")
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    p.add_argument('--checkpoint', type=str, default=None, help='Path to checkpoint to continue training')
     return p.parse_args()
 
 
@@ -121,21 +122,30 @@ def train(args):
         json.dump({c: i for i, c in enumerate(classes)}, f, ensure_ascii=False, indent=2)
 
     criterion = nn.CrossEntropyLoss()
-    # Only train classifier initially
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = CosineAnnealingLR(optimizer, T_max=max(1, args.epochs))
 
     start_epoch = 0
     best_val_acc = 0.0
-    if args.resume:
-        print(f"Loading checkpoint {args.resume}")
-        ck = torch.load(args.resume, map_location=device)
-        model.load_state_dict(ck.get("model_state", ck), strict=False)
-        optimizer_state = ck.get("optimizer_state")
+
+    # --- START: domyślne wznawianie z final.pth ---
+    if not args.checkpoint:
+        final_ckpt = out_dir / "final.pth"
+        if final_ckpt.exists():
+            args.checkpoint = str(final_ckpt)
+            print(f"Auto-resume: found final.pth, resuming from {args.checkpoint}")
+    # --- END ---
+
+    # Load existing checkpoint if provided
+    if args.checkpoint:
+        print(f"Loading checkpoint {args.checkpoint}")
+        checkpoint = torch.load(args.checkpoint, map_location=device)
+        model.load_state_dict(checkpoint.get("model_state", checkpoint), strict=False)
+        optimizer_state = checkpoint.get("optimizer_state")
         if optimizer_state:
             optimizer.load_state_dict(optimizer_state)
-        start_epoch = ck.get("epoch", 0) + 1
-        best_val_acc = ck.get("best_val_acc", 0.0)
+        start_epoch = checkpoint.get("epoch", 0) + 1
+        best_val_acc = checkpoint.get("best_val_acc", 0.0)
 
     scaler = torch.cuda.amp.GradScaler() if device.startswith("cuda") else None
 

@@ -30,9 +30,9 @@ GERMAN_BRANDS = ["BMW", "Audi", "Mercedes", "Volkswagen", "Porsche"]
 TAGS = ["car", "vehicle", "automobile", "sedan", "SUV", "hatchback", "coupe", "convertible"]
 # view-specific tags to capture multiple viewpoints (front, rear, side, interior, etc.)
 VIEW_TAGS = [
-    "front view", "rear view", "side view", "three quarter view", "rear", "front", "left side", "right side", "interior", "dashboard", "back"
+    "front view", "rear view", "side view", "three quarter view", "rear", "front", "left side", "right side", "back"
 ]
-YEARS = ["2010s", "2020s", "2000s"]
+YEARS = ["2010s", "2020s", "2000s","1990s", "1980s", "1970s"]
 MIN_WIDTH = 200
 MIN_HEIGHT = 200
 
@@ -129,11 +129,11 @@ def main(args):
 
     yolo_model = None
     if use_yolo:
-        # load yolov8n weights (this will download if missing)
+        # load yolov8s weights (this will download if missing)
         try:
-            yolo_model = YOLO('yolov8n.pt')
+            yolo_model = YOLO('yolov8s.pt')
         except Exception:
-            yolo_model = YOLO('yolov8n')
+            yolo_model = YOLO('yolov8s')
 
     os.makedirs(output_dir, exist_ok=True)
 

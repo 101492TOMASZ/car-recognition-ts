@@ -1,310 +1,240 @@
-import time
-import logging
-import torch
-from torch import nn
-from torchvision import models, transforms
-from PIL import Image
-from utils.logger import get_logger
-
-log = get_logger('predict')
-import sys
-import os
 import numpy as np
-import matplotlib.pyplot as plt
-try:
-    from ultralytics import YOLO
-except Exception:
-    YOLO = None
+from PIL import Image
+import torch
+from torchvision import transforms
+import traceback
+import os
+import json
 
-# === KONFIGURACJA ===
-def resource_path(relative_path):
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        return os.path.join(getattr(sys, '_MEIPASS'), relative_path)
-    return os.path.join(os.path.abspath('.'), relative_path)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# Determine model path: prefer latest run under `runs/` (best.pth -> final.pth -> any checkpoint),
-# otherwise fallback to packaged model `model/car_model2.pth`.
-
-# Always use the latest best.pth from runs/ as the model for GUI and CLI
 def find_latest_best_checkpoint(runs_dir='runs'):
-    runs_dir = os.path.abspath(runs_dir)
     if not os.path.isdir(runs_dir):
-        return None, None
-    candidates = []
+        return None, {}
+    bests = []
     for name in os.listdir(runs_dir):
         p = os.path.join(runs_dir, name)
-        if os.path.isdir(p):
-            candidates.append(p)
-    if not candidates:
-        return None, None
-    candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    for run in candidates:
-        best = os.path.join(run, 'best.pth')
-        if os.path.isfile(best):
-            return best, os.path.join(run, 'label_map.json')
-    return None, None
+        if not os.path.isdir(p):
+            continue
+        cand = os.path.join(p, 'final.pth')  # changed from best.pth to final.pth
+        lm = os.path.join(p, 'label_map.json')
+        if os.path.isfile(cand):
+            mtime = os.path.getmtime(cand)
+            label_map = {}
+            if os.path.isfile(lm):
+                try:
+                    with open(lm, 'r') as f:
+                        label_map = json.load(f)
+                except Exception:
+                    label_map = {}
+            bests.append((mtime, cand, label_map))
+    if not bests:
+        return None, {}
+    bests.sort(reverse=True)
+    return bests[0][1], bests[0][2]
 
-MODEL_PATH, LABEL_MAP_PATH = find_latest_best_checkpoint('runs')
-if MODEL_PATH is None:
-    MODEL_PATH = resource_path('model/car_model2.pth')  # legacy fallback
-    LABEL_MAP_PATH = None
-IMAGE_PATH = "cropped_car.jpg"  # path used for debugging if needed
-
-# device and classifier
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# Load detection model (YOLOv8n) if available
-if YOLO is not None:
-    try:
-        yolo = YOLO('yolov8n.pt')
-    except Exception:
-        # fall back to model name which will download weights
-        yolo = YOLO('yolov8n')
-else:
-    yolo = None
-
-# Load checkpoint (prefer weights_only to avoid pickle risks when supported)
-try:
-    checkpoint = torch.load(MODEL_PATH, map_location=device, weights_only=True)
-except TypeError:
-    # older torch versions may not support weights_only argument
-    checkpoint = torch.load(MODEL_PATH, map_location=device)
-except FileNotFoundError:
-    # if MODEL_PATH missing, raise a clearer error
-    raise FileNotFoundError(f"Model checkpoint not found at {MODEL_PATH}")
-
-# Extract state_dict and label maps if present
-if isinstance(checkpoint, dict) and 'model_state' in checkpoint:
-    state_dict = checkpoint['model_state']
-    # prefer label_map.json saved alongside run
-    label_to_idx = checkpoint.get('label_map', {}) or checkpoint.get('label_to_idx', {}) or {}
-    idx_to_label = {v: k for k, v in label_to_idx.items()} if label_to_idx else {}
-elif isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-    state_dict = checkpoint['model_state_dict']
-    label_to_idx = checkpoint.get('label_to_idx', {}) or {}
-    idx_to_label = {v: k for k, v in label_to_idx.items()} if label_to_idx else {}
-else:
-    # assume checkpoint is a raw state_dict or mapping
-    state_dict = checkpoint if isinstance(checkpoint, dict) else {}
-    label_to_idx = {}
+def load_classifier(model_path, label_map, device='cpu'):
+    import torch.nn as nn
+    from torchvision import models
+    num_classes = None
     idx_to_label = {}
-
-# If we didn't get a label_map from the checkpoint, try loading label_map.json from the run folder
-if (not label_to_idx or not idx_to_label) and LABEL_MAP_PATH and os.path.isfile(LABEL_MAP_PATH):
+    if isinstance(label_map, dict):
+        try:
+            idx_map = {int(k): v for k, v in label_map.items()}
+            if idx_map:
+                num_classes = max(idx_map.keys()) + 1
+                idx_to_label = idx_map
+        except Exception:
+            try:
+                inv_map = {int(v): k for k, v in label_map.items()}
+                if inv_map:
+                    num_classes = max(inv_map.keys()) + 1
+                    idx_to_label = inv_map
+            except Exception:
+                idx_to_label = {}
+                num_classes = 100
+    elif isinstance(label_map, list):
+        idx_to_label = {i: v for i, v in enumerate(label_map)}
+        num_classes = len(label_map)
+    if num_classes is None:
+        num_classes = 100
+    model = models.mobilenet_v2(pretrained=False)
+    model.classifier[1] = nn.Linear(model.last_channel, num_classes)
     try:
-        import json
-        with open(LABEL_MAP_PATH, 'r', encoding='utf-8') as f:
-            label_to_idx = json.load(f)
-            idx_to_label = {v: k for k, v in label_to_idx.items()}
-    except Exception:
-        log.exception('Failed to load label_map.json at %s', LABEL_MAP_PATH)
-
-# Inspect keys to decide which architecture to instantiate
-state_keys = list(state_dict.keys()) if isinstance(state_dict, dict) else []
-use_resnet = any(k.startswith('layer') or k.startswith('conv1') or k.startswith('fc.') or 'fc.weight' in k for k in state_keys)
-use_mobilenet = any(k.startswith('features') or k.startswith('classifier') for k in state_keys)
-
-# try to infer num_classes from checkpoint
-inferred_num_classes = None
-if any(k == 'fc.weight' for k in state_keys):
-    try:
-        inferred_num_classes = state_dict['fc.weight'].shape[0]
-    except Exception:
-        inferred_num_classes = None
-if any(k == 'classifier.1.weight' for k in state_keys):
-    try:
-        inferred_num_classes = state_dict['classifier.1.weight'].shape[0]
-    except Exception:
-        pass
-if not inferred_num_classes and label_to_idx:
-    inferred_num_classes = len(label_to_idx)
-
-if use_resnet and not use_mobilenet:
-    # instantiate ResNet50 to load legacy checkpoints
-    model = models.resnet50(weights=None)
-    # if we inferred num_classes, replace fc head accordingly
-    if inferred_num_classes:
-        model.fc = nn.Linear(model.fc.in_features, inferred_num_classes)
-    model_loaded = True
-elif use_mobilenet and not use_resnet:
-    model = models.mobilenet_v2(weights=None)
-    # ensure classifier head exists; classifier[1] is Linear
-    if inferred_num_classes:
-        model.classifier[1] = nn.Linear(model.classifier[1].in_features, inferred_num_classes)
-    model_loaded = True
-else:
-    # default to MobileNetV2 (modern choice), loading may fail if checkpoint is incompatible
-    model = models.mobilenet_v2(weights=None)
-    model_loaded = True
-
-# Attempt to load state_dict into model; allow strict=False to be flexible
-try:
-    model.load_state_dict(state_dict, strict=False)
-except Exception as e:
-    # try loading nested dict
-    try:
-        if isinstance(state_dict, dict) and 'state_dict' in state_dict:
-            model.load_state_dict(state_dict['state_dict'], strict=False)
+        state = torch.load(model_path, map_location=device)
+        # Obsługa formatu {'model_state': ...} (z final.pth)
+        if isinstance(state, dict):
+            if 'model_state' in state:
+                sd = state['model_state']
+            elif 'state_dict' in state:
+                sd = state['state_dict']
+            else:
+                sd = state
         else:
-            raise
-    except Exception as e2:
-        raise RuntimeError(f"Unable to load model checkpoint: {e} / {e2}")
+            sd = state
+        try:
+            model.load_state_dict(sd, strict=False)
+        except Exception:
+            new_sd = {}
+            for k, v in sd.items():
+                nk = k.replace('module.', '')
+                if nk.startswith('model.'):
+                    nk = nk[len('model.'):]
+                new_sd[nk] = v
+            model.load_state_dict(new_sd, strict=False)
+    except Exception as e:
+        print(f"[load_classifier] ERROR loading model: {e}\n{traceback.format_exc()}")
+    model.to(device)
+    model.eval()
+    return model, idx_to_label
 
-model = model.to(device)
-model.eval()
-log.info("Loaded classifier from %s on device %s", MODEL_PATH, device)
-
-# Dynamic mapping
-brand_to_id = {label: idx for label, idx in label_to_idx.items()} if label_to_idx else {}
-
-
-
-# === FUNKCJA DO GRAD-CAM ===
-def generate_gradcam(image_tensor, model, target_class, upsample_size=(224, 224)):
+def predict_image(image_path, yolo_model, classifier=None, idx_to_label=None, device='cpu'):
     """
-    Compute Grad-CAM and return a normalized float32 numpy array in 0..1
-    sized to `upsample_size`.
+    Runs YOLO detection, crops the car, and classifies with MobileNetV2.
+    If classifier or idx_to_label is None, loads the latest from runs/.
+    Returns: dict with keys 'brand', 'confidence', 'message' (None if ok, else error msg)
     """
-    activations = []
-    gradients = []
+    print(f"[predict_image] Predicting for: {image_path}")
+    if classifier is None or idx_to_label is None:
+        best_pth, label_map = find_latest_best_checkpoint('runs')
+        if best_pth is None:
+            print("[predict_image] No classifier checkpoint found in runs/!")
+            return {'brand': None, 'confidence': None, 'message': 'No classifier checkpoint found'}
+        classifier, idx_to_label = load_classifier(best_pth, label_map, device=device)
+        print(f"[predict_image] Loaded classifier: {best_pth}")
+    heatmap_img = None
+    img = Image.open(image_path).convert('RGB')
+    crop_img = img
+    crop_info = 'full image'
+    if yolo_model is not None:
+        try:
+            results = yolo_model(np.array(img))
+        except Exception:
+            results = yolo_model(img)
+        xyxy = []
+        conf = []
+        cls = []
+        try:
+            r = results[0]
+            boxes = getattr(r, 'boxes', None)
+            if boxes is not None:
+                xyxy = getattr(boxes, 'xyxy', None)
+                conf = getattr(boxes, 'conf', None)
+                cls = getattr(boxes, 'cls', None)
+                if xyxy is not None:
+                    try:
+                        xyxy = xyxy.cpu().numpy()
+                    except Exception:
+                        xyxy = np.array(xyxy)
+                if conf is not None:
+                    try:
+                        conf = conf.cpu().numpy()
+                    except Exception:
+                        conf = np.array(conf)
+                if cls is not None:
+                    try:
+                        cls = cls.cpu().numpy()
+                    except Exception:
+                        cls = np.array(cls)
+        except Exception:
+            xyxy, conf, cls = [], [], []
+        print(f"[predict_image] YOLO found {len(xyxy)} boxes.")
+        # Crop do największego bounding boxa niezależnie od klasy
+        biggest_box = None
+        max_area = 0
+        for i, box in enumerate(xyxy if len(xyxy) else []):
+            try:
+                b = list(map(float, box))
+            except Exception:
+                continue
+            area = (b[2] - b[0]) * (b[3] - b[1])
+            print(f"  box {i}: area={area}, coords={b}")
+            if area > max_area:
+                biggest_box = b
+                max_area = area
+        if biggest_box is None and len(xyxy) == 0:
+            crop_img = img
+            crop_info = 'full image (no detection)'
+        else:
+            chosen = biggest_box
+            if chosen is not None:
+                x1, y1, x2, y2 = map(int, chosen)
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(img.width - 1, x2), min(img.height - 1, y2)
+                if x2 > x1 and y2 > y1:
+                    crop_img = img.crop((x1, y1, x2, y2))
+                    crop_info = f'crop: ({x1},{y1},{x2},{y2})'
 
-    def forward_hook(module, input, output):
-        activations.append(output.detach())
-
-    def backward_hook(module, grad_in, grad_out):
-        gradients.append(grad_out[0].detach())
-
-    # Find last Conv2d
-    last_conv = None
-    for name, module in model.named_modules():
-        if isinstance(module, nn.Conv2d):
-            last_conv = module
-
-    if last_conv is None:
-        raise RuntimeError("No Conv2d layer found in the model for Grad-CAM")
-
-    # register hooks
-    handle_fwd = last_conv.register_forward_hook(forward_hook)
-    # register_backward_hook is deprecated but still works; fallback to full hook if available
+    # --- GRAD-CAM DLA MOBILENETV2 ---
     try:
-        handle_bwd = last_conv.register_full_backward_hook(backward_hook)
-    except Exception:
-        handle_bwd = last_conv.register_backward_hook(backward_hook)
-
-    # Forward + backward
-    output = model(image_tensor)
-    model.zero_grad()
-    class_score = output[0, target_class]
-    class_score.backward()
-
-    act = activations[0]   # [1, C, H, W]
-    grad = gradients[0]    # [1, C, H, W]
-    weights = grad.mean(dim=(2, 3), keepdim=True)  # [1, C, 1, 1]
-    gradcam_map = (weights * act).sum(dim=1, keepdim=True)  # [1, 1, H, W]
-    gradcam_map = torch.relu(gradcam_map).squeeze().cpu().numpy()
-
-    # Normalize to 0..1
-    gradcam_map = (gradcam_map - gradcam_map.min()) / (gradcam_map.max() - gradcam_map.min() + 1e-8)
-
-    # Resize to desired upsample size using PIL
-    gradcam_uint8 = np.uint8(255 * gradcam_map)
-    gradcam_img = Image.fromarray(gradcam_uint8).resize(upsample_size, resample=Image.BILINEAR)
-    gradcam_resized = np.array(gradcam_img).astype(np.float32) / 255.0
-
-    handle_fwd.remove()
-    handle_bwd.remove()
-
-    return gradcam_resized
-
-
-# === FUNKCJA DO PREDYKCJI ===
-def predict_image(image):
-    # Transformacje obrazu (zgodne z tune_model.py)
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),  # classifier input size
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-
-    t0 = time.perf_counter()
-    # Keep a copy of the original image and size
-    orig_image = image.convert('RGB')
-    orig_size = orig_image.size  # (width, height)
-
-    # First: run YOLO to detect car and crop. If YOLO is not available or doesn't detect, use full image
-    crop_image = image
+        import cv2
+        import io, base64
+        transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        image_tensor = transform(crop_img).unsqueeze(0).to(device)
+        image_tensor.requires_grad = True
+        # Forward + backward na predykcję
+        classifier.eval()
+        fmap = None
+        grad = None
+        def forward_hook(module, input, output):
+            nonlocal fmap
+            fmap = output.detach()
+        def backward_hook(module, grad_in, grad_out):
+            nonlocal grad
+            grad = grad_out[0].detach()
+        handle_fwd = classifier.features[-1].register_forward_hook(forward_hook)
+        handle_bwd = classifier.features[-1].register_backward_hook(backward_hook)
+        out = classifier(image_tensor)
+        pred_class = out.argmax(dim=1).item()
+        score = out[0, pred_class]
+        classifier.zero_grad()
+        score.backward(retain_graph=True)
+        handle_fwd.remove()
+        handle_bwd.remove()
+        # Grad-CAM: waga = średnia po spatial grad
+        weights = grad.mean(dim=[2, 3], keepdim=True)  # shape (1, C, 1, 1)
+        cam = (weights * fmap).sum(dim=1, keepdim=True)
+        cam = cam.squeeze().cpu().numpy()
+        cam = np.maximum(cam, 0)
+        cam = (cam - cam.min()) / (np.ptp(cam) + 1e-8)
+        cam_img = (cam * 255).astype(np.uint8)
+        cam_img = cv2.resize(cam_img, (crop_img.width, crop_img.height))
+        crop_np = np.array(crop_img.convert('RGB'))
+        heatmap_color = cv2.applyColorMap(cam_img, cv2.COLORMAP_JET)
+        overlay = cv2.addWeighted(crop_np, 0.5, heatmap_color, 0.5, 0)
+        heatmap_pil = Image.fromarray(overlay)
+        buf = io.BytesIO()
+        heatmap_pil.save(buf, format='PNG')
+        heatmap_img = base64.b64encode(buf.getvalue()).decode('utf-8')
+    except Exception as e:
+        print(f"[predict_image] Grad-CAM generation failed: {e}")
+        heatmap_img = None
+    print(f"[predict_image] Using {crop_info}")
     try:
-        if yolo is not None:
-            # ultralytics expects numpy array (H,W,3) RGB or BGR; pass RGB
-            img_np = np.array(image.convert('RGB'))
-            results = yolo(img_np, imgsz=640, conf=0.25, verbose=False)
-            # results is a list-like; take first
-            if len(results) > 0:
-                r = results[0]
-                boxes = getattr(r, 'boxes', None)
-                if boxes is not None and len(boxes) > 0:
-                    # boxes.xyxy, boxes.cls, boxes.conf
-                    xyxy = boxes.xyxy.cpu().numpy()
-                    cls = boxes.cls.cpu().numpy() if hasattr(boxes, 'cls') else None
-                    confs = boxes.conf.cpu().numpy() if hasattr(boxes, 'conf') else None
-                    # prefer detections with COCO car class (2)
-                    chosen = None
-                    for i, x in enumerate(xyxy):
-                        c = int(cls[i]) if cls is not None else -1
-                        if c == 2 or chosen is None:
-                            # choose highest confidence among cars or fallback to first box
-                            if chosen is None:
-                                chosen = (x, confs[i] if confs is not None else 1.0, c)
-                            else:
-                                if confs is not None and confs[i] > chosen[1]:
-                                    chosen = (x, confs[i], c)
-                    if chosen is not None:
-                        x1, y1, x2, y2 = map(int, chosen[0])
-                        # clip
-                        x1, y1 = max(0, x1), max(0, y1)
-                        x2, y2 = min(image.width - 1, x2), min(image.height - 1, y2)
-                        if x2 > x1 and y2 > y1:
-                            crop_image = image.crop((x1, y1, x2, y2))
-    except Exception:
-        log.exception('YOLO detection failed, continuing with full image')
-
-    # Prepare classifier input
-    image_tensor = transform(crop_image).unsqueeze(0).to(device)
-
-    # Forward to get probabilities (no grad needed)
-    with torch.no_grad():
-        output = model(image_tensor)
-        probabilities = torch.softmax(output, dim=1)
-
-    confidence, predicted = torch.max(probabilities, 1)
-    predicted_idx = predicted.item()
-    predicted_class = idx_to_label.get(predicted_idx, str(predicted_idx))
-    predicted_id = brand_to_id.get(predicted_class, "Nieznane ID")
-    confidence_percent = confidence.item() * 100
-
-    log.info("Model przewiduje: %s (id=%s) pewność=%.2f%%", predicted_class, predicted_id, confidence_percent)
-
-    # Compute Grad-CAM on the cropped image for visualization
-    try:
-        image_tensor_for_cam = image_tensor.clone().detach().requires_grad_(True)
-        gradcam_map = generate_gradcam(image_tensor_for_cam, model, predicted_idx)
-
-        # Apply a colormap to the Grad-CAM map and resize to original image size
-        cmap = plt.get_cmap('jet')
-        heatmap_rgb = cmap(gradcam_map)[:, :, :3]  # HxWx3 float
-        heatmap_uint8 = np.uint8(heatmap_rgb * 255)
-        heatmap_img = Image.fromarray(heatmap_uint8).resize(crop_image.size, resample=Image.BILINEAR)
-        blended = Image.blend(crop_image.convert('RGB'), heatmap_img.convert('RGB'), alpha=0.5)
-    except Exception:
-        log.exception('Grad-CAM failed')
-        blended = crop_image
-
-    t1 = time.perf_counter()
-    log.info("Prediction finished in %.1f ms", (t1 - t0) * 1000)
-    return {
-        "brand": predicted_class,
-        "confidence": confidence_percent,
-        "heatmap": blended
-    }
+        transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        image_tensor = transform(crop_img).unsqueeze(0).to(device)
+        print(f"[predict_image] Tensor shape: {image_tensor.shape}, min={image_tensor.min().item():.4f}, max={image_tensor.max().item():.4f}")
+        classifier.eval()
+        with torch.no_grad():
+            out = classifier(image_tensor)
+            probs = torch.softmax(out, dim=1)
+        print(f"[predict_image] Raw logits: {out.cpu().numpy()}")
+        print(f"[predict_image] Softmax: {probs.cpu().numpy()}")
+        conf_val, pred = torch.max(probs, 1)
+        predicted_idx = int(pred.item())
+        print(f"[predict_image] Predicted idx: {predicted_idx}")
+        print(f"[predict_image] idx_to_label: {idx_to_label}")
+        predicted_label = idx_to_label.get(predicted_idx, str(predicted_idx))
+        confidence = float(conf_val.item() * 100.0)
+        print(f"[predict_image] Result: brand={predicted_label}, confidence={confidence:.2f}%")
+        return {'brand': predicted_label, 'confidence': confidence, 'message': None, 'heatmap': heatmap_img}
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[predict_image] ERROR: {e}\n{tb}")
+        return {'brand': None, 'confidence': None, 'message': f'{e}\n{tb}', 'heatmap': None}
