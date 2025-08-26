@@ -3,16 +3,18 @@ import os
 import json
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QFileDialog, QHBoxLayout, QMessageBox,
-    QFrame, QSizePolicy
+    QFrame, QSizePolicy, QGraphicsOpacityEffect
 )
 from PyQt5.QtGui import QPixmap, QFont
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPropertyAnimation
 from PIL import Image
 import numpy as np
 import torch
 import torch.nn as nn
 from torchvision import transforms, models
 from predict import predict_image
+from database import init_db, insert_record, save_image_copy
+from history_viewer import HistoryViewer
 import cv2
 import time
 
@@ -28,7 +30,9 @@ class PredictionThread(QThread):
         self.idx_to_label = idx_to_label
         self.device = device
     def run(self):
+        start = time.time()
         res = predict_image(self.image_path, self.yolo, self.classifier, self.idx_to_label, device=self.device)
+        res['processing_time'] = time.time() - start
         if res.get('message'):
             self.error.emit(res['message'])
         else:
@@ -94,6 +98,8 @@ class CarCropGUI(QWidget):
         self.confirm_button.setEnabled(False)
         self.confirm_button.setVisible(False)
         self.confirm_button.clicked.connect(self._on_confirm_click)
+        self.history_button = QPushButton("Historia")
+        self.history_button.clicked.connect(self._open_history)
 
         # layout
         main_layout = QVBoxLayout()
@@ -109,6 +115,7 @@ class CarCropGUI(QWidget):
         btns_layout.addWidget(self.load_button)
         btns_layout.addWidget(self.heatmap_button)
         btns_layout.addWidget(self.confirm_button)
+        btns_layout.addWidget(self.history_button)
         btns_layout.addStretch(1)
         main_layout.addLayout(btns_layout)
 
@@ -122,10 +129,39 @@ class CarCropGUI(QWidget):
         self.heatmap_data = None
         self.heatmap_visible = False
         self.feedback_saved = False
-
         self.load_models()
         self.confirm_button.setVisible(False)
         self.confirm_button.setEnabled(False)
+        # container for running animations so they are not garbage-collected
+        self._animations = []
+        # ensure db exists
+        try:
+            init_db()
+        except Exception:
+            pass
+
+    def _fade_in_widget(self, widget, duration=300):
+        """Apply a fade-in animation to a widget (keeps reference to animation)."""
+        try:
+            effect = QGraphicsOpacityEffect(widget)
+            widget.setGraphicsEffect(effect)
+            anim = QPropertyAnimation(effect, b"opacity")
+            anim.setDuration(duration)
+            anim.setStartValue(0.0)
+            anim.setEndValue(1.0)
+            anim.start()
+            # keep reference until finished
+            self._animations.append(anim)
+
+            def _on_finished():
+                try:
+                    self._animations.remove(anim)
+                except ValueError:
+                    pass
+
+            anim.finished.connect(_on_finished)
+        except Exception:
+            pass
 
     def load_models(self):
         if self.yolo is None:
@@ -160,7 +196,13 @@ class CarCropGUI(QWidget):
         self.current_image = img
         self.current_image_path = path
         pix = QPixmap(path)
-        self.image_label.setPixmap(pix.scaled(self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        scaled = pix.scaled(self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.image_label.setPixmap(scaled)
+        # animate smooth fade-in for the newly loaded image
+        try:
+            self._fade_in_widget(self.image_label, duration=400)
+        except Exception:
+            pass
         # reset/close any existing heatmap and disable the heatmap button until a new one is generated
         try:
             self.heatmap_label.clear()
@@ -182,6 +224,7 @@ class CarCropGUI(QWidget):
     def _on_pred_finished(self, res):
         brand = res.get('brand')
         conf = res.get('confidence')
+        proc_time = res.get('processing_time', 0.0)
         self.heatmap_data = res.get('heatmap')
         if self.heatmap_data:
             self.heatmap_button.setEnabled(True)
@@ -203,6 +246,18 @@ class CarCropGUI(QWidget):
         # show report button
         self.confirm_button.setVisible(True)
         self.confirm_button.setEnabled(True)
+        # save a copy of the image and insert into DB
+        try:
+            # save a copy into the hidden database image folder
+            try:
+                dst = save_image_copy(self.current_image_path)
+            except Exception:
+                # fallback: try to save via PIL into the hidden dir
+                base = os.path.basename(self.current_image_path)
+                dst = save_image_copy(self.current_image_path, prefix='copied')
+            insert_record(self.current_image_path, dst, brand, float(conf or 0.0), True, float(proc_time), int(time.time()))
+        except Exception:
+            pass
         if brand is None:
             self.result_label.setText(res.get('message', 'Brak wyników'))
         else:
@@ -238,7 +293,12 @@ class CarCropGUI(QWidget):
             painter.drawPixmap(x, y, scaled)
             painter.end()
             self.heatmap_label.setPixmap(canvas)
-            self.heatmap_label.show()
+            # set initial invisible and animate fade-in
+            self.heatmap_label.setVisible(True)
+            try:
+                self._fade_in_widget(self.heatmap_label, duration=350)
+            except Exception:
+                pass
             self.heatmap_button.setText("Schowaj heatmapę")
             self.heatmap_visible = True
         except Exception as e:
@@ -254,6 +314,13 @@ class CarCropGUI(QWidget):
             self.confirm_button.setEnabled(False)
         except Exception:
             pass
+
+    def _open_history(self):
+        try:
+            hv = HistoryViewer(self)
+            hv.exec_()
+        except Exception as e:
+            QMessageBox.warning(self, 'Błąd', f'Nie można otworzyć historii: {e}')
 
     def _on_confirm_click(self):
         # user reports incorrect prediction

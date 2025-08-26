@@ -31,3 +31,10 @@
 {"timestamp": 1756206977, "image": "/home/tomasz/Pobrane/maxresdefault.jpg", "predicted": "VOLKSWAGEN", "confidence": 90.78342318534851, "correct": true}
 {"timestamp": 1756206985, "image": "/home/tomasz/Pobrane/Original-38521-vw-golf-r-blue-0088j.jpg", "predicted": "VOLKSWAGEN", "confidence": 99.54307079315186, "correct": true}
 {"timestamp": 1756207002, "image": "/home/tomasz/Pobrane/624b5236e83a1_o_full.jpg", "predicted": "VOLKSWAGEN", "confidence": 53.021228313446045, "correct": true}
+{"timestamp": 1756207236, "image": "/home/tomasz/Pobrane/16-9_Golf-4_Wheels-and-tyres.jpg", "predicted": "VOLKSWAGEN", "confidence": 96.51461243629456, "correct": true}
+{"timestamp": 1756207252, "image": "/home/tomasz/Pobrane/maxresdefault.jpg", "predicted": "VOLKSWAGEN", "confidence": 90.78342318534851, "correct": true}
+{"timestamp": 1756207264, "image": "/home/tomasz/Pobrane/16-9_Golf-4_Wheels-and-tyres.jpg", "predicted": "VOLKSWAGEN", "confidence": 96.51461243629456, "correct": true}
+{"timestamp": 1756207266, "image": "/home/tomasz/Pobrane/16-9_Golf-4_Wheels-and-tyres.jpg", "predicted": "VOLKSWAGEN", "confidence": 96.51461243629456, "correct": false, "reported": true}
+{"timestamp": 1756207773, "image": "/home/tomasz/Pobrane/83bd110f3f824006b1227657c628f83a.jpg", "predicted": "PORSCHE", "confidence": 99.99879598617554, "correct": true}
+{"timestamp": 1756207773, "image": "/home/tomasz/Pobrane/83bd110f3f824006b1227657c628f83a.jpg", "predicted": "PORSCHE", "confidence": 99.99879598617554, "correct": false, "reported": true}
+{"timestamp": 1756207827, "image": "/home/tomasz/Pobrane/16-9_Golf-4_Wheels-and-tyres.jpg", "predicted": "VOLKSWAGEN", "confidence": 96.51461243629456, "correct": true}
