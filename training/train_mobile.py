@@ -101,6 +101,35 @@ def evaluate(model, loader, device):
     return losses / total, correct / total if total > 0 else 0.0
 
 
+def evaluate_per_class(model, loader, device, classes):
+    """
+    Return per-class counts and percentages:
+      { class_name: {"correct": int, "total": int, "accuracy": float_percent} }
+    """
+    model.eval()
+    n_classes = len(classes)
+    correct_counts = [0] * n_classes
+    total_counts = [0] * n_classes
+    with torch.no_grad():
+        for imgs, targets in loader:
+            imgs = imgs.to(device)
+            targets = targets.to(device)
+            outputs = model(imgs)
+            preds = outputs.argmax(dim=1).cpu().tolist()
+            tg = targets.cpu().tolist()
+            for p, t in zip(preds, tg):
+                total_counts[t] += 1
+                if p == t:
+                    correct_counts[t] += 1
+    results = {}
+    for i, cname in enumerate(classes):
+        tot = total_counts[i]
+        corr = correct_counts[i]
+        acc = (corr / tot * 100.0) if tot > 0 else 0.0
+        results[cname] = {"correct": int(corr), "total": int(tot), "accuracy_pct": round(acc, 2)}
+    return results
+
+
 def save_checkpoint(state, out_dir, name="checkpoint.pth"):
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, name)
@@ -208,6 +237,13 @@ def train(args):
 
     # Final save
     save_checkpoint({"model_state": model.state_dict(), "args": vars(args)}, str(out_dir), name="final.pth")
+    # compute and save per-class results on validation set
+    print("Computing per-class validation results...")
+    per_class = evaluate_per_class(model, val_loader, device, classes)
+    per_class_path = out_dir / "per_class_results.json"
+    with open(per_class_path, "w", encoding="utf-8") as f:
+        json.dump(per_class, f, ensure_ascii=False, indent=2)
+    print(f"Per-class validation results saved to: {per_class_path}")
     print(f"Training finished. Best val acc: {best_val_acc:.4f}. Artifacts saved to {out_dir}")
 
 

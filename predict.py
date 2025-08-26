@@ -137,6 +137,46 @@ def predict_image(image_path, yolo_model, classifier=None, idx_to_label=None, de
         except Exception:
             xyxy, conf, cls = [], [], []
         print(f"[predict_image] YOLO found {len(xyxy)} boxes.")
+        # If YOLO didn't find a box that looks like a car, abort early.
+        detected_car = False
+        try:
+            # try to read class names mapping from result or model
+            names = None
+            if 'r' in locals() and hasattr(r, 'names'):
+                names = getattr(r, 'names')
+            elif hasattr(yolo_model, 'model') and hasattr(yolo_model.model, 'names'):
+                names = getattr(yolo_model.model, 'names')
+            # if no boxes at all -> no car
+            if len(xyxy) == 0:
+                detected_car = False
+            else:
+                # require class array to inspect labels; if not present, treat as no car
+                if cls is None or len(cls) == 0:
+                    detected_car = False
+                else:
+                    for c in cls:
+                        try:
+                            ci = int(c)
+                            lbl = None
+                            if names is not None and ci in names:
+                                lbl = names[ci]
+                            elif names is not None:
+                                # names might be list-like
+                                lbl = names[ci] if ci < len(names) else str(ci)
+                            else:
+                                lbl = str(ci)
+                        except Exception:
+                            lbl = str(int(c))
+                        lname = lbl.lower() if isinstance(lbl, str) else str(lbl).lower()
+                        # check common tokens for car in English/Polish
+                        if 'car' in lname or 'samoch' in lname or 'auto' in lname:
+                            detected_car = True
+                            break
+        except Exception:
+            detected_car = False
+        if not detected_car:
+            print("[predict_image] No car detected by YOLO - aborting classification.")
+            return {'brand': None, 'confidence': None, 'message': 'Zdjęcie nie przedstawia auta', 'heatmap': None}
         # Crop do największego bounding boxa niezależnie od klasy
         biggest_box = None
         max_area = 0
@@ -202,7 +242,10 @@ def predict_image(image_path, yolo_model, classifier=None, idx_to_label=None, de
         cam_img = (cam * 255).astype(np.uint8)
         cam_img = cv2.resize(cam_img, (crop_img.width, crop_img.height))
         crop_np = np.array(crop_img.convert('RGB'))
-        heatmap_color = cv2.applyColorMap(cam_img, cv2.COLORMAP_JET)
+        # cam_img is already uint8 in range 0-255 after earlier scaling/resizing
+        cam_uint8 = cam_img
+        # apply normal colormap (no inversion)
+        heatmap_color = cv2.applyColorMap(cam_uint8, cv2.COLORMAP_JET)
         overlay = cv2.addWeighted(crop_np, 0.5, heatmap_color, 0.5, 0)
         heatmap_pil = Image.fromarray(overlay)
         buf = io.BytesIO()

@@ -5,6 +5,7 @@ from torchvision import models, transforms, datasets
 from PIL import Image
 import json
 from pathlib import Path
+from collections import defaultdict
 
 def find_latest_run_checkpoint(runs_dir='runs'):
     runs_dir = os.path.abspath(runs_dir)
@@ -95,8 +96,14 @@ def main():
     ds = datasets.ImageFolder(args.data, transform=tf)
     loader = torch.utils.data.DataLoader(ds, batch_size=args.batch, shuffle=False)
 
+    # overall metrics
     correct = 0
     total = 0
+
+    # per-class counters (indexed by class idx)
+    per_totals = defaultdict(int)
+    per_correct = defaultdict(int)
+
     for x, y in loader:
         x = x.to(args.device)
         y = y.to(args.device)
@@ -105,14 +112,36 @@ def main():
             pred = out.argmax(1)
         correct += (pred==y).sum().item()
         total += x.size(0)
+        # per-sample accumulation
+        preds_cpu = pred.cpu().tolist()
+        targets_cpu = y.cpu().tolist()
+        for p, t in zip(preds_cpu, targets_cpu):
+            per_totals[t] += 1
+            if p == t:
+                per_correct[t] += 1
+
     acc = correct/total if total else 0.0
     incorrect = total - correct
     err_pct = (incorrect/total)*100 if total else 0.0
     print(f"Dokładność na {args.data}: {acc:.4f} ({correct}/{total})")
     print(f"Błędnych predykcji: {incorrect} / {total} ({err_pct:.2f}%)")
 
+    # Per-class percentages
+    print("\nSzczegółowe wyniki per-klasa:")
+    # Determine label names: prefer idx_to_label, fallback to dataset class names
+    num_classes = max(max(per_totals.keys(), default=-1), max(per_correct.keys(), default=-1), len(ds.classes)-1) + 1
+    for i in range(num_classes):
+        total_i = per_totals.get(i, 0)
+        correct_i = per_correct.get(i, 0)
+        acc_i = (correct_i / total_i * 100.0) if total_i > 0 else 0.0
+        if idx_to_label:
+            label_name = idx_to_label.get(i, f"{i}")
+        else:
+            label_name = ds.classes[i] if i < len(ds.classes) else str(i)
+        print(f"- {label_name}: {acc_i:.2f}% ({correct_i}/{total_i})")
+
     # Pokaż przykładowe predykcje
-    print("Przykładowe predykcje:")
+    print("\nPrzykładowe predykcje:")
     for i in range(len(ds)):
         img, label = ds[i]
         with torch.no_grad():

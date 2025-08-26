@@ -14,3 +14,5 @@ dist/
 dataset_german
 dataset_clean
 tests/
+/.pytest_cache
+/runs
