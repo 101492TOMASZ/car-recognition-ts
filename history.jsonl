@@ -38,3 +38,8 @@
 {"timestamp": 1756207773, "image": "/home/tomasz/Pobrane/83bd110f3f824006b1227657c628f83a.jpg", "predicted": "PORSCHE", "confidence": 99.99879598617554, "correct": true}
 {"timestamp": 1756207773, "image": "/home/tomasz/Pobrane/83bd110f3f824006b1227657c628f83a.jpg", "predicted": "PORSCHE", "confidence": 99.99879598617554, "correct": false, "reported": true}
 {"timestamp": 1756207827, "image": "/home/tomasz/Pobrane/16-9_Golf-4_Wheels-and-tyres.jpg", "predicted": "VOLKSWAGEN", "confidence": 96.51461243629456, "correct": true}
+{"timestamp": 1756209869, "image": "/home/tomasz/Pobrane/1200-Audi-12.png", "predicted": "AUDI", "confidence": 99.9948263168335, "correct": true}
+{"timestamp": 1756209870, "image": "/home/tomasz/Pobrane/1200-Audi-12.png", "predicted": "AUDI", "confidence": 99.9948263168335, "correct": false, "reported": true}
+{"timestamp": 1756209999, "image": "/home/tomasz/Pobrane/83bd110f3f824006b1227657c628f83a.jpg", "predicted": "PORSCHE", "confidence": 99.99879598617554, "correct": true}
+{"timestamp": 1756210000, "image": "/home/tomasz/Pobrane/83bd110f3f824006b1227657c628f83a.jpg", "predicted": "PORSCHE", "confidence": 99.99879598617554, "correct": false, "reported": true}
+{"timestamp": 1756210187, "image": "/home/tomasz/Pobrane/1200-Audi-12.png", "predicted": "AUDI", "confidence": 99.9948263168335, "correct": true}

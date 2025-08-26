@@ -255,7 +255,12 @@ class CarCropGUI(QWidget):
                 # fallback: try to save via PIL into the hidden dir
                 base = os.path.basename(self.current_image_path)
                 dst = save_image_copy(self.current_image_path, prefix='copied')
-            insert_record(self.current_image_path, dst, brand, float(conf or 0.0), True, float(proc_time), int(time.time()))
+            rid = insert_record(self.current_image_path, dst, brand, float(conf or 0.0), True, float(proc_time), int(time.time()))
+            try:
+                # store DB record id to allow marking it incorrect later
+                self.last_result['record_id'] = int(rid)
+            except Exception:
+                pass
         except Exception:
             pass
         if brand is None:
@@ -332,6 +337,14 @@ class CarCropGUI(QWidget):
             hist_path = os.path.join(os.path.dirname(__file__), 'history.jsonl')
             with open(hist_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            # mark DB record as incorrect if we have it
+            try:
+                from database import update_record_correct
+                rid = self.last_result.get('record_id')
+                if rid:
+                    update_record_correct(int(rid), False)
+            except Exception:
+                pass
             QMessageBox.information(self, 'Dziękuję', 'Zgłoszenie zapisane')
             self.confirm_button.setEnabled(False)
             self.confirm_button.setVisible(False)

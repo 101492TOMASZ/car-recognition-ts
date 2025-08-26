@@ -206,3 +206,14 @@ def export_records_pdf(rids, out_pdf_path, db_path=None):
     c.showPage()
     c.save()
     return out_pdf_path
+
+
+def update_record_correct(rid, correct, db_path=None):
+    """Update the 'correct' flag for a record."""
+    dbp = db_path or DB_NAME
+    conn = sqlite3.connect(dbp)
+    cur = conn.cursor()
+    cur.execute('UPDATE records SET correct=? WHERE id=?', (int(bool(correct)), rid))
+    conn.commit()
+    conn.close()
+    return True
