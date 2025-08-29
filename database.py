@@ -110,11 +110,19 @@ def export_record_pdf(rid, out_pdf_path, db_path=None):
     text_y -= 18
     c.drawString(text_x, text_y, f"Predicted: {rec['predicted']}")
     text_y -= 18
-    c.drawString(text_x, text_y, f"Confidence: {rec['confidence']:.2f}")
+    try:
+        cval = float(rec.get('confidence') or 0.0)
+    except Exception:
+        cval = 0.0
+    c.drawString(text_x, text_y, f"Confidence: {cval:.2f}")
     text_y -= 18
     c.drawString(text_x, text_y, f"Correct: {bool(rec['correct'])}")
     text_y -= 18
-    c.drawString(text_x, text_y, f"Processing time (s): {rec['processing_time']:.3f}")
+    try:
+        pt = float(rec.get('processing_time') or 0.0)
+    except Exception:
+        pt = 0.0
+    c.drawString(text_x, text_y, f"Processing time (s): {pt:.3f}")
     text_y -= 18
     import datetime
     dt = datetime.datetime.fromtimestamp(rec['timestamp']).isoformat()
@@ -130,7 +138,7 @@ def export_record_pdf(rid, out_pdf_path, db_path=None):
             c.drawImage(img_reader, margin, margin, width=max_w, height=max_h, preserveAspectRatio=True, anchor='sw')
     except Exception:
         pass
-    c.showPage()
+    # do not add an extra blank page
     c.save()
     return out_pdf_path
 
@@ -191,8 +199,16 @@ def export_records_pdf(rids, out_pdf_path, db_path=None):
         txt_x = x + 6 * mm
         txt_y = y_top - box_h + caption_h - 6 * mm
         c.setFont('Helvetica', 10)
-        c.drawString(txt_x, txt_y + 14, f"ID: {rec['id']}  Predicted: {rec.get('predicted')} ({rec.get('confidence'):.2f}%)")
-        c.drawString(txt_x, txt_y, f"Correct: {bool(rec.get('correct'))}  Time: {rec.get('processing_time'):.3f}s")
+        try:
+            cval = float(rec.get('confidence') or 0.0)
+        except Exception:
+            cval = 0.0
+        try:
+            pt = float(rec.get('processing_time') or 0.0)
+        except Exception:
+            pt = 0.0
+        c.drawString(txt_x, txt_y + 14, f"ID: {rec['id']}  Predicted: {rec.get('predicted')} ({cval:.2f}%)")
+        c.drawString(txt_x, txt_y, f"Correct: {bool(rec.get('correct'))}  Time: {pt:.3f}s")
 
     idx = 0
     for i, rec in enumerate(recs):
@@ -203,7 +219,7 @@ def export_records_pdf(rids, out_pdf_path, db_path=None):
         draw_record_at(rec, page_idx, pos_idx)
         idx += 1
 
-    c.showPage()
+    # do not add an extra blank page at the end
     c.save()
     return out_pdf_path
 

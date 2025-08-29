@@ -86,7 +86,7 @@ def load_classifier(model_path, label_map, device='cpu'):
     model.eval()
     return model, idx_to_label
 
-def predict_image(image_path, yolo_model, classifier=None, idx_to_label=None, device='cpu'):
+def predict_image(image_path, yolo_model, classifier=None, idx_to_label=None, device='cpu', require_vehicle=True, min_conf=0.25):
     """
     Runs YOLO detection, crops the car, and classifies with MobileNetV2.
     If classifier or idx_to_label is None, loads the latest from runs/.
@@ -104,6 +104,7 @@ def predict_image(image_path, yolo_model, classifier=None, idx_to_label=None, de
     img = Image.open(image_path).convert('RGB')
     crop_img = img
     crop_info = 'full image'
+    biggest_box = None  # (area, [x1,y1,x2,y2])
     if yolo_model is not None:
         try:
             results = yolo_model(np.array(img))
@@ -137,71 +138,56 @@ def predict_image(image_path, yolo_model, classifier=None, idx_to_label=None, de
         except Exception:
             xyxy, conf, cls = [], [], []
         print(f"[predict_image] YOLO found {len(xyxy)} boxes.")
-        # If YOLO didn't find a box that looks like a car, abort early.
-        detected_car = False
+        # Vehicle gating & crop selection
         try:
-            # try to read class names mapping from result or model
             names = None
             if 'r' in locals() and hasattr(r, 'names'):
                 names = getattr(r, 'names')
             elif hasattr(yolo_model, 'model') and hasattr(yolo_model.model, 'names'):
                 names = getattr(yolo_model.model, 'names')
-            # if no boxes at all -> no car
-            if len(xyxy) == 0:
-                detected_car = False
-            else:
-                # require class array to inspect labels; if not present, treat as no car
-                if cls is None or len(cls) == 0:
-                    detected_car = False
-                else:
-                    for c in cls:
-                        try:
-                            ci = int(c)
-                            lbl = None
-                            if names is not None and ci in names:
-                                lbl = names[ci]
-                            elif names is not None:
-                                # names might be list-like
-                                lbl = names[ci] if ci < len(names) else str(ci)
-                            else:
-                                lbl = str(ci)
-                        except Exception:
-                            lbl = str(int(c))
-                        lname = lbl.lower() if isinstance(lbl, str) else str(lbl).lower()
-                        # check common tokens for car in English/Polish
-                        if 'car' in lname or 'samoch' in lname or 'auto' in lname:
-                            detected_car = True
-                            break
         except Exception:
-            detected_car = False
-        if not detected_car:
-            print("[predict_image] No car detected by YOLO - aborting classification.")
-            return {'brand': None, 'confidence': None, 'message': 'Zdjęcie nie przedstawia auta', 'heatmap': None}
-        # Crop do największego bounding boxa niezależnie od klasy
-        biggest_box = None
-        max_area = 0
+            names = None
+        allowed = {'car','samoch','auto','vehicle','automobile','truck','bus','van','pickup','suv','train'}
+        img_area = max(1, img.width * img.height)
+        candidates = []  # list of (area, box)
+        max_area = 0.0
         for i, box in enumerate(xyxy if len(xyxy) else []):
             try:
                 b = list(map(float, box))
             except Exception:
                 continue
-            area = (b[2] - b[0]) * (b[3] - b[1])
-            print(f"  box {i}: area={area}, coords={b}")
+            area = max(0.0, (b[2] - b[0]) * (b[3] - b[1]))
+            ci = None
+            lbl = ''
+            try:
+                ci = int(cls[i]) if cls is not None and len(cls) > i else None
+                if names is not None:
+                    if isinstance(names, dict) and ci in names:
+                        lbl = str(names[ci])
+                    elif hasattr(names, '__len__') and ci is not None and ci < len(names):
+                        lbl = str(names[ci])
+            except Exception:
+                lbl = ''
+            cval = float(conf[i]) if conf is not None and len(conf) > i else 0.0
+            lname = lbl.lower()
+            is_vehicle = any(tok in lname for tok in allowed)
+            if is_vehicle and cval >= float(min_conf) and area >= 0.01 * img_area:
+                candidates.append((area, b))
             if area > max_area:
-                biggest_box = b
+                biggest_box = (area, b)
                 max_area = area
-        if biggest_box is None and len(xyxy) == 0:
-            crop_img = img
-            crop_info = 'full image (no detection)'
-        else:
-            chosen = biggest_box
-            if chosen is not None:
-                x1, y1, x2, y2 = map(int, chosen)
-                x1, y1 = max(0, x1), max(0, y1)
-                x2, y2 = min(img.width - 1, x2), min(img.height - 1, y2)
-                if x2 > x1 and y2 > y1:
-                    crop_img = img.crop((x1, y1, x2, y2))
-                    crop_info = f'crop: ({x1},{y1},{x2},{y2})'
+        if require_vehicle and not candidates:
+            msg = 'Zdjęcie nie przedstawia pojazdu'
+            print(f"[predict_image] {msg} — aborting classification.")
+            return {'brand': None, 'confidence': None, 'message': msg, 'heatmap': None, 'no_vehicle': True}
+        chosen = candidates[-1][1] if candidates else (biggest_box[1] if biggest_box else None)
+        if chosen is not None:
+            x1, y1, x2, y2 = map(int, chosen)
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(img.width - 1, x2), min(img.height - 1, y2)
+            if x2 > x1 and y2 > y1:
+                crop_img = img.crop((x1, y1, x2, y2))
+                crop_info = f'crop: ({x1},{y1},{x2},{y2})'
 
     # --- GRAD-CAM DLA MOBILENETV2 ---
     try:
@@ -276,8 +262,8 @@ def predict_image(image_path, yolo_model, classifier=None, idx_to_label=None, de
         predicted_label = idx_to_label.get(predicted_idx, str(predicted_idx))
         confidence = float(conf_val.item() * 100.0)
         print(f"[predict_image] Result: brand={predicted_label}, confidence={confidence:.2f}%")
-        return {'brand': predicted_label, 'confidence': confidence, 'message': None, 'heatmap': heatmap_img}
+        return {'brand': predicted_label, 'confidence': confidence, 'message': None, 'heatmap': heatmap_img, 'no_vehicle': False}
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[predict_image] ERROR: {e}\n{tb}")
-        return {'brand': None, 'confidence': None, 'message': f'{e}\n{tb}', 'heatmap': None}
+        return {'brand': None, 'confidence': None, 'message': f'{e}\n{tb}', 'heatmap': None, 'no_vehicle': False}

@@ -3,19 +3,15 @@ import os
 import json
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QFileDialog, QHBoxLayout, QMessageBox,
-    QFrame, QSizePolicy, QGraphicsOpacityEffect
+    QFrame, QSizePolicy, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
 )
 from PyQt5.QtGui import QPixmap, QFont
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPropertyAnimation
 from PIL import Image
-import numpy as np
 import torch
-import torch.nn as nn
-from torchvision import transforms, models
 from predict import predict_image
 from database import init_db, insert_record, save_image_copy
 from history_viewer import HistoryViewer
-import cv2
 import time
 
 
@@ -33,7 +29,10 @@ class PredictionThread(QThread):
         start = time.time()
         res = predict_image(self.image_path, self.yolo, self.classifier, self.idx_to_label, device=self.device)
         res['processing_time'] = time.time() - start
-        if res.get('message'):
+        # Treat 'no_vehicle' as a normal finished state so GUI can show a friendly message
+        if res.get('no_vehicle'):
+            self.finished.emit(res)
+        elif res.get('message'):
             self.error.emit(res['message'])
         else:
             self.finished.emit(res)
@@ -46,12 +45,14 @@ class CarCropGUI(QWidget):
         self.setGeometry(100, 100, 960, 720)
         self.setMinimumSize(900, 640)
         self.setStyleSheet("""
-            QWidget { background: #f4f6f8; font-family: 'Segoe UI', 'Arial', sans-serif; font-size: 14px; color: #212121; }
-            QLabel#TitleLabel { font-size: 22px; font-weight: 700; color: #111; margin-bottom: 8px; }
-            QLabel#ResultLabel { font-size: 16px; font-weight: 600; color: #0b72bf; margin: 8px 0 14px 0; }
-            QPushButton { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4f8cff, stop:1 #38e4ae); color: white; border: none; border-radius: 12px; padding: 8px 18px; font-size: 14px; font-weight: 600; margin: 6px; min-width: 140px; min-height: 36px; }
-            QPushButton:disabled { background: #bfc7d1; color: #eee; }
-            QFrame#ImageFrame { background: #ffffff; border-radius: 12px; border: 1px solid #e6e9ee; padding: 8px; }
+            QWidget { background: #f5f7fb; font-family: 'Segoe UI', 'Arial', sans-serif; font-size: 14px; color: #1f2328; }
+            QLabel#TitleLabel { font-size: 24px; font-weight: 700; color: #0f141a; margin: 2px 0 10px 0; }
+            QLabel#ResultLabel { font-size: 16px; font-weight: 600; color: #0b72bf; margin: 10px 0 12px 0; background: #ffffff; border: 1px solid #e6e9ee; border-radius: 12px; padding: 10px 14px; }
+            QPushButton { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4f8cff, stop:1 #38e4ae); color: #ffffff; border: none; border-radius: 12px; padding: 9px 18px; font-size: 14px; font-weight: 600; margin: 6px; min-width: 140px; min-height: 36px; }
+            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #5b95ff, stop:1 #48e9b6); }
+            QPushButton:pressed { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3d7df2, stop:1 #2fd09f); }
+            QPushButton:disabled { background: #c7cdd7; color: #f2f4f7; }
+            QFrame#ImageFrame { background: #ffffff; border-radius: 14px; border: 1px solid #e6e9ee; padding: 8px; }
             QLabel#HeatmapLabel { border-radius: 10px; }
         """)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -69,6 +70,16 @@ class CarCropGUI(QWidget):
         self.image_frame.setObjectName("ImageFrame")
         self.image_frame.setFixedSize(800, 460)
         self.image_frame.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # subtle shadow under image frame
+        try:
+            shadow = QGraphicsDropShadowEffect(self.image_frame)
+            shadow.setBlurRadius(18)
+            shadow.setXOffset(0)
+            shadow.setYOffset(6)
+            shadow.setColor(Qt.black)
+            self.image_frame.setGraphicsEffect(shadow)
+        except Exception:
+            pass
 
         self.image_label = QLabel(self.image_frame)
         self.image_label.setObjectName("ImageLabel")
@@ -169,7 +180,7 @@ class CarCropGUI(QWidget):
                 from ultralytics import YOLO
                 y = YOLO('yolov8s.pt')
                 try:
-                    y.to('cpu')
+                    y.to(self.device)
                 except Exception:
                     pass
                 self.yolo = y
@@ -222,6 +233,20 @@ class CarCropGUI(QWidget):
         self.pred_thread.start()
 
     def _on_pred_finished(self, res):
+        # handle explicit no-vehicle gate
+        if res.get('no_vehicle'):
+            # disable heatmap, hide report button, don't save anything
+            self.heatmap_data = None
+            self.heatmap_label.clear()
+            self.heatmap_label.hide()
+            self.heatmap_button.setEnabled(False)
+            self.heatmap_button.setText("Pokaż heatmapę")
+            self.confirm_button.setVisible(False)
+            self.confirm_button.setEnabled(False)
+            self.last_result = None
+            msg = res.get('message') or 'Zdjęcie nie przedstawia pojazdu'
+            self.result_label.setText(msg)
+            return
         brand = res.get('brand')
         conf = res.get('confidence')
         proc_time = res.get('processing_time', 0.0)
@@ -266,7 +291,10 @@ class CarCropGUI(QWidget):
         if brand is None:
             self.result_label.setText(res.get('message', 'Brak wyników'))
         else:
-            self.result_label.setText(f"Brand={brand}, Confidence={conf:.2f}%")
+            try:
+                self.result_label.setText(f"Brand={brand}, Confidence={float(conf or 0.0):.2f}%")
+            except Exception:
+                self.result_label.setText(f"Brand={brand}")
 
     def toggle_heatmap(self):
         if not self.heatmap_data:
@@ -282,11 +310,10 @@ class CarCropGUI(QWidget):
             return
         import base64
         from PyQt5.QtGui import QPixmap
-        from PyQt5.QtCore import QByteArray
         try:
             img_bytes = base64.b64decode(self.heatmap_data)
             qimg = QPixmap()
-            qimg.loadFromData(QByteArray(img_bytes), 'PNG')
+            qimg.loadFromData(img_bytes, 'PNG')
             target = self.image_label.size()
             scaled = qimg.scaled(target, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             canvas = QPixmap(target)

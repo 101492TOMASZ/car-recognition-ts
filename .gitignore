@@ -1,10 +1,26 @@
-venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/
+dist/
+build/
+*.log
+*.sqlite
+car_history.db
+.db_images/
+history.jsonl
+.env
+*.pth
+*.pt
+runs/venv/
 .venv/
 __pycache__/
 *.pyc
 dataset/
 temp/
 .pth
+
 
 *.jpg
 # PyInstaller
