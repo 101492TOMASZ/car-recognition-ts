@@ -3,7 +3,8 @@ import os
 import json
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QFileDialog, QHBoxLayout, QMessageBox,
-    QFrame, QSizePolicy, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
+    QFrame, QSizePolicy, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QDialog,
+    QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PyQt5.QtGui import QPixmap, QFont
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPropertyAnimation, QEvent
@@ -12,6 +13,7 @@ import torch
 from predict import predict_image
 from database import init_db, insert_record, save_image_copy
 from history_viewer import HistoryViewer
+from sampledialog import SampleDialog
 import time
 
 
@@ -36,6 +38,55 @@ class PredictionThread(QThread):
             self.error.emit(res['message'])
         else:
             self.finished.emit(res)
+
+
+class BatchPredictionThread(QThread):
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+    def __init__(self, image_paths, yolo_model, classifier, idx_to_label, device='cpu'):
+        super().__init__()
+        self.paths = list(image_paths)
+        self.yolo = yolo_model
+        self.classifier = classifier
+        self.idx_to_label = idx_to_label
+        self.device = device
+
+    def run(self):
+        import time as _time
+        results = []
+        brand_counts = {}
+        total_time = 0.0
+        no_vehicle_count = 0
+
+        for p in self.paths:
+            start = _time.time()
+            try:
+                res = predict_image(p, self.yolo, self.classifier, self.idx_to_label, device=self.device)
+            except Exception as e:
+                res = {'path': p, 'message': f'error: {e}'}
+            res['path'] = p
+            proc = res.get('processing_time') or (_time.time() - start)
+            res['processing_time'] = float(proc)
+            total_time += float(proc)
+
+            if res.get('no_vehicle'):
+                no_vehicle_count += 1
+            else:
+                b = res.get('brand')
+                if b:
+                    brand_counts[b] = brand_counts.get(b, 0) + 1
+
+            results.append(res)
+
+        summary = {
+            'count': len(self.paths),
+            'no_vehicle': no_vehicle_count,
+            'avg_time': (total_time / max(1, len(self.paths))),
+            'brand_counts': brand_counts,
+            'results': results,
+        }
+        self.finished.emit(summary)
 
 
 class CarCropGUI(QWidget):
@@ -108,6 +159,8 @@ class CarCropGUI(QWidget):
         # buttons
         self.load_button = QPushButton("Wybierz obraz")
         self.load_button.clicked.connect(self.load_image)
+        self.test_button = QPushButton("Tryb testowy")
+        self.test_button.clicked.connect(self._open_test_mode)
         self.heatmap_button = QPushButton("Pokaż heatmapę")
         self.heatmap_button.setEnabled(False)
         self.heatmap_button.clicked.connect(self.toggle_heatmap)
@@ -130,6 +183,7 @@ class CarCropGUI(QWidget):
         btns_layout.setSpacing(12)
         btns_layout.addStretch(1)
         btns_layout.addWidget(self.load_button)
+        btns_layout.addWidget(self.test_button)
         btns_layout.addWidget(self.heatmap_button)
         btns_layout.addWidget(self.confirm_button)
         btns_layout.addWidget(self.history_button)
@@ -202,9 +256,32 @@ class CarCropGUI(QWidget):
         except Exception:
             pass
 
-        path, _ = QFileDialog.getOpenFileName(self, 'Wybierz obraz', '', 'Images (*.png *.jpg *.jpeg *.bmp)')
-        if not path:
+        paths, _ = QFileDialog.getOpenFileNames(self, 'Wybierz obraz(y)', '', 'Images (*.png *.jpg *.jpeg *.bmp)')
+        if not paths:
             return
+        if len(paths) == 1:
+            self._set_image_and_predict(paths[0])
+            return
+        # batch
+        self._run_batch(paths)
+
+    def _run_batch(self, paths):
+        # UI prep
+        try:
+            self.confirm_button.setVisible(False)
+            self.confirm_button.setEnabled(False)
+            self.heatmap_label.hide()
+            self.heatmap_button.setEnabled(False)
+            self.result_label.setText(f'Batch: przetwarzanie {len(paths)} obrazów...')
+        except Exception:
+            pass
+
+        self.batch_thread = BatchPredictionThread(paths, self.yolo, None, None, device=self.device)
+        self.batch_thread.finished.connect(self._on_batch_finished)
+        self.batch_thread.error.connect(self._on_batch_error)
+        self.batch_thread.start()
+
+    def _set_image_and_predict(self, path: str):
         try:
             img = Image.open(path).convert('RGB')
         except Exception as e:
@@ -237,6 +314,111 @@ class CarCropGUI(QWidget):
         self.pred_thread.finished.connect(self._on_pred_finished)
         self.pred_thread.error.connect(self._on_pred_error)
         self.pred_thread.start()
+
+    def _open_test_mode(self):
+        dlg = SampleDialog(self)
+        if dlg.exec_() == QDialog.Accepted and dlg.selected_path:
+            self._set_image_and_predict(dlg.selected_path)
+
+    def _on_batch_finished(self, summary):
+        # Show summary dialog with table and optional CSV export
+        try:
+            dlg = QDialog(self)
+            dlg.setWindowTitle('Wyniki batch testu')
+            lay = QVBoxLayout(dlg)
+
+            head = QLabel(
+                f"Plików: {summary.get('count', 0)}  |  Bez pojazdu: {summary.get('no_vehicle', 0)}  |  Śr. czas: {summary.get('avg_time', 0.0):.2f}s"
+            )
+            lay.addWidget(head)
+
+            table = QTableWidget()
+            rows = len(summary.get('results', []))
+            table.setRowCount(rows)
+            table.setColumnCount(5)
+            table.setHorizontalHeaderLabels(['Plik', 'Marka', 'Pewność (%)', 'Czas (s)', 'Status'])
+            table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+            table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+            table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+            table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+
+            for r, res in enumerate(summary.get('results', [])):
+                path = os.path.basename(res.get('path', ''))
+                brand = res.get('brand') or ''
+                conf = res.get('confidence')
+                try:
+                    conf_str = f"{float(conf or 0.0):.2f}"
+                except Exception:
+                    conf_str = ''
+                t = res.get('processing_time')
+                try:
+                    t_str = f"{float(t or 0.0):.2f}"
+                except Exception:
+                    t_str = ''
+                status = 'OK' if not res.get('no_vehicle') else 'Brak pojazdu'
+                if res.get('message') and not res.get('no_vehicle'):
+                    status = res.get('message')
+
+                table.setItem(r, 0, QTableWidgetItem(path))
+                table.setItem(r, 1, QTableWidgetItem(str(brand)))
+                table.setItem(r, 2, QTableWidgetItem(conf_str))
+                table.setItem(r, 3, QTableWidgetItem(t_str))
+                table.setItem(r, 4, QTableWidgetItem(status))
+
+            lay.addWidget(table)
+
+            # Buttons
+            btns = QHBoxLayout()
+            save_btn = QPushButton('Zapisz CSV...')
+            close_btn = QPushButton('Zamknij')
+            btns.addStretch(1)
+            btns.addWidget(save_btn)
+            btns.addWidget(close_btn)
+            lay.addLayout(btns)
+
+            def _save_csv():
+                import csv
+                path, _ = QFileDialog.getSaveFileName(dlg, 'Zapisz wyniki', 'batch_results.csv', 'CSV (*.csv)')
+                if not path:
+                    return
+                try:
+                    with open(path, 'w', newline='', encoding='utf-8') as f:
+                        w = csv.writer(f)
+                        w.writerow(['file', 'brand', 'confidence', 'time_s', 'status'])
+                        for res in summary.get('results', []):
+                            fn = res.get('path', '')
+                            brand = res.get('brand') or ''
+                            conf = res.get('confidence') or 0.0
+                            t = res.get('processing_time') or 0.0
+                            status = 'no_vehicle' if res.get('no_vehicle') else (res.get('message') or 'ok')
+                            try:
+                                conf = float(conf or 0.0)
+                            except Exception:
+                                conf = 0.0
+                            try:
+                                t = float(t or 0.0)
+                            except Exception:
+                                t = 0.0
+                            w.writerow([fn, brand, f"{conf:.2f}", f"{t:.2f}", status])
+                    QMessageBox.information(self, 'Zapisano', f'Zapisano: {path}')
+                except Exception as e:
+                    QMessageBox.warning(self, 'Błąd', f'Nie udało się zapisać CSV: {e}')
+
+            save_btn.clicked.connect(_save_csv)
+            close_btn.clicked.connect(dlg.accept)
+            dlg.exec_()
+        except Exception as e:
+            QMessageBox.warning(self, 'Batch', f'Nie udało się pokazać wyników: {e}')
+
+        # reset small UI bits
+        try:
+            self.result_label.setText('Batch zakończony')
+        except Exception:
+            pass
+
+    def _on_batch_error(self, err):
+        QMessageBox.warning(self, 'Batch', f'Błąd batch: {err}')
 
     def _on_pred_finished(self, res):
         # handle explicit no-vehicle gate

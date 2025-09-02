@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPixmap, QColor
 from PyQt5.QtCore import Qt
-from database import get_all_records, export_record_pdf, get_record, export_records_pdf
+from database import get_all_records, get_record, export_records_table_pdf
 
 
 class HistoryViewer(QDialog):
@@ -31,9 +31,9 @@ class HistoryViewer(QDialog):
 
         main_layout = QHBoxLayout(self)
 
-        # left: list with checkboxes
+        # left: list (multi-select)
         self.listw = QListWidget()
-        self.listw.setSelectionMode(QListWidget.SingleSelection)
+        self.listw.setSelectionMode(QListWidget.ExtendedSelection)
         self.listw.itemSelectionChanged.connect(self._on_select)
         self.listw.itemClicked.connect(self._on_item_clicked)
         self.listw.setMinimumWidth(380)
@@ -56,16 +56,12 @@ class HistoryViewer(QDialog):
 
         # buttons row
         btns = QHBoxLayout()
-        self.btn_export_selected = QPushButton('Eksportuj zaznaczony')
-        self.btn_export_selected.clicked.connect(self._export_pdf)
-        self.btn_export_selected.setEnabled(False)
-        self.btn_export_checked = QPushButton('Eksportuj wybrane (checkbox)')
-        self.btn_export_checked.clicked.connect(self._export_checked_pdf)
-        self.btn_export_all = QPushButton('Eksportuj wszystkie')
-        self.btn_export_all.clicked.connect(self._export_all_pdf)
+        self.btn_export = QPushButton('Eksportuj zaznaczone')
+        self.btn_export.clicked.connect(self._export_selected_pdf)
+        self.btn_export.setEnabled(False)
         self.btn_refresh = QPushButton('Odśwież')
         self.btn_refresh.clicked.connect(self._load)
-        for b in (self.btn_export_selected, self.btn_export_checked, self.btn_export_all, self.btn_refresh):
+        for b in (self.btn_export, self.btn_refresh):
             btns.addWidget(b)
         btns.addItem(QSpacerItem(6, 6))
 
@@ -89,10 +85,7 @@ class HistoryViewer(QDialog):
             label = f"#{r['id']} • {r.get('predicted')} ({conf:.2f}%) • {t}"
             it = QListWidgetItem(label)
             it.setData(Qt.UserRole, r['id'])
-            # make item checkable for export selection
-            it.setFlags(it.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-            it.setCheckState(Qt.Unchecked)
-            # lightly color incorrect records
+            it.setFlags(it.flags() | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
             try:
                 if not bool(r.get('correct')):
                     it.setBackground(QColor(255, 220, 220))
@@ -102,7 +95,7 @@ class HistoryViewer(QDialog):
         self.preview.setText('Wybierz rekord')
         self.preview.setPixmap(QPixmap())
         self.stats.setText('')
-        self.btn_export_selected.setEnabled(False)
+        self.btn_export.setEnabled(False)
 
     def _on_select(self):
         items = self.listw.selectedItems()
@@ -110,7 +103,7 @@ class HistoryViewer(QDialog):
             self.preview.setText('Wybierz rekord')
             self.preview.setPixmap(QPixmap())
             self.stats.setText('')
-            self.btn_export_selected.setEnabled(False)
+            self.btn_export.setEnabled(False)
             return
         rid = items[0].data(Qt.UserRole)
         rec = get_record(rid)
@@ -118,7 +111,7 @@ class HistoryViewer(QDialog):
             self.preview.setText('Brak danych')
             self.preview.setPixmap(QPixmap())
             self.stats.setText('')
-            self.btn_export_selected.setEnabled(False)
+            self.btn_export.setEnabled(False)
             return
         img = rec.get('saved_image') or rec.get('image_path')
         if img and os.path.isfile(img):
@@ -126,7 +119,6 @@ class HistoryViewer(QDialog):
             self.preview.setPixmap(pix.scaled(self.preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
         else:
             self.preview.setText('Brak obrazu')
-        # show stats for the selected record
         try:
             conf = float(rec.get('confidence') or 0.0)
         except Exception:
@@ -143,25 +135,9 @@ class HistoryViewer(QDialog):
             f"Processing time: {pt:.3f}s\n"
             f"Timestamp: {rec.get('timestamp')}"
         )
-        self.btn_export_selected.setEnabled(True)
-
-    def _export_pdf(self):
-        items = self.listw.selectedItems()
-        if not items:
-            QMessageBox.information(self, 'Eksport', 'Najpierw wybierz rekord.')
-            return
-        rid = items[0].data(Qt.UserRole)
-        out, _ = QFileDialog.getSaveFileName(self, 'Zapisz PDF', f'record_{rid}.pdf', 'PDF files (*.pdf)')
-        if not out:
-            return
-        try:
-            export_record_pdf(rid, out)
-            QMessageBox.information(self, 'OK', f'Zapisano {out}')
-        except Exception as e:
-            QMessageBox.warning(self, 'Błąd', f'Nie można wyeksportować: {e}')
+        self.btn_export.setEnabled(len(items) > 0)
 
     def _on_item_clicked(self, item):
-        # checkbox / click updates preview and stats
         try:
             rid = item.data(Qt.UserRole)
             rec = get_record(rid)
@@ -189,38 +165,22 @@ class HistoryViewer(QDialog):
                 f"Processing time: {pt:.3f}s\n"
                 f"Timestamp: {rec.get('timestamp')}"
             )
-            self.btn_export_selected.setEnabled(True)
+            self.btn_export.setEnabled(True)
         except Exception:
             pass
 
-    def _export_all_pdf(self):
-        ids = [self.listw.item(i).data(Qt.UserRole) for i in range(self.listw.count())]
-        if not ids:
-            QMessageBox.information(self, 'Eksport', 'Brak rekordów.')
+    def _export_selected_pdf(self):
+        items = self.listw.selectedItems()
+        if not items:
+            QMessageBox.information(self, 'Eksport', 'Zaznacz co najmniej jeden rekord (Ctrl/Cmd + klik).')
             return
-        out, _ = QFileDialog.getSaveFileName(self, 'Zapisz PDF', f'history.pdf', 'PDF files (*.pdf)')
+        ids = [it.data(Qt.UserRole) for it in items]
+        default_name = 'selected.pdf' if len(ids) > 1 else f'record_{ids[0]}.pdf'
+        out, _ = QFileDialog.getSaveFileName(self, 'Zapisz PDF', default_name, 'PDF files (*.pdf)')
         if not out:
             return
         try:
-            export_records_pdf(ids, out)
-            QMessageBox.information(self, 'Eksport', f'Zapisano: {out}')
-        except Exception as e:
-            QMessageBox.critical(self, 'Błąd eksportu', str(e))
-
-    def _export_checked_pdf(self):
-        ids = []
-        for i in range(self.listw.count()):
-            it = self.listw.item(i)
-            if it.checkState() == Qt.Checked:
-                ids.append(it.data(Qt.UserRole))
-        if not ids:
-            QMessageBox.information(self, 'Eksport', 'Zaznacz rekordy (checkbox).')
-            return
-        out, _ = QFileDialog.getSaveFileName(self, 'Zapisz PDF', f'selected.pdf', 'PDF files (*.pdf)')
-        if not out:
-            return
-        try:
-            export_records_pdf(ids, out)
+            export_records_table_pdf(ids, out)
             QMessageBox.information(self, 'Eksport', f'Zapisano: {out}')
         except Exception as e:
             QMessageBox.critical(self, 'Błąd eksportu', str(e))

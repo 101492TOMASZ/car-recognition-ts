@@ -87,3 +87,5 @@
 {"timestamp": 1756810291, "image": "/home/tomasz/Pobrane/51rfQHtbzrL._UF894,1000_QL80_.jpg", "predicted": "VOLKSWAGEN", "confidence": 98.39942455291748, "correct": true}
 {"timestamp": 1756810293, "image": "/home/tomasz/Pobrane/51rfQHtbzrL._UF894,1000_QL80_.jpg", "predicted": "VOLKSWAGEN", "confidence": 98.39942455291748, "correct": false, "reported": true}
 {"timestamp": 1756810557, "image": "/home/tomasz/Obrazy/Zrzuty ekranu/Zrzut ekranu z 2025-08-24 16-14-54.png", "predicted": "VOLKSWAGEN", "confidence": 98.78360629081726, "correct": true}
+{"timestamp": 1756813656, "image": "/home/tomasz/Pobrane/16-9_Golf-4_Wheels-and-tyres.jpg", "predicted": "VOLKSWAGEN", "confidence": 96.51461243629456, "correct": true}
+{"timestamp": 1756814605, "image": "/home/tomasz/Pobrane/624b5236e83a1_o_full.jpg", "predicted": "VOLKSWAGEN", "confidence": 53.463369607925415, "correct": true}

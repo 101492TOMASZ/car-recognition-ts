@@ -233,3 +233,102 @@ def update_record_correct(rid, correct, db_path=None):
     conn.commit()
     conn.close()
     return True
+
+def export_records_table_pdf(rids, out_pdf_path, db_path=None):
+    """Export multiple records into a single PDF as a clean, paginated table.
+
+    Columns: ID, Predykcja, Pewność (%), Poprawny, Czas (s), Znacznik czasu
+    Uses ReportLab Platypus for automatic pagination and header repetition.
+    """
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.utils import ImageReader
+        from reportlab.lib.units import mm
+    except Exception:
+        raise RuntimeError('reportlab is required to export PDF')
+
+    recs = []
+    for rid in rids:
+        r = get_record(rid, db_path=db_path)
+        if r:
+            recs.append(r)
+    if not recs:
+        raise ValueError('No valid records to export')
+
+    doc = SimpleDocTemplate(out_pdf_path, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    story = []
+
+    title = Paragraph('Historia predykcji – eksport (z miniaturami)', styles['Heading2'])
+    story.append(title)
+    story.append(Spacer(1, 8))
+
+    data = [[
+        'Obraz', 'ID', 'Predykcja', 'Pewność (%)', 'Poprawny', 'Czas (s)', 'Znacznik czasu'
+    ]]
+    thumb_w = 28 * mm
+    thumb_h = 20 * mm
+    for rec in recs:
+        try:
+            cval = float(rec.get('confidence') or 0.0)
+        except Exception:
+            cval = 0.0
+        try:
+            pt = float(rec.get('processing_time') or 0.0)
+        except Exception:
+            pt = 0.0
+        try:
+            import datetime
+            ts = rec.get('timestamp')
+            ts_val = int(ts) if ts is not None else 0
+            dt = datetime.datetime.fromtimestamp(ts_val).strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            dt = ''
+        ok = 'TAK' if bool(rec.get('correct')) else 'NIE'
+        # build thumbnail from saved_image (temp) or fallback to image_path
+        img_path = rec.get('saved_image') or rec.get('image_path')
+        thumb = Paragraph('—', styles['Normal'])
+        if img_path and os.path.isfile(img_path):
+            try:
+                ir = ImageReader(img_path)
+                iw, ih = ir.getSize()
+                scale = min(thumb_w / iw, thumb_h / ih)
+                tw = max(1, iw * scale)
+                th = max(1, ih * scale)
+                thumb = RLImage(img_path, width=tw, height=th)
+            except Exception:
+                pass
+        data.append([
+            thumb,
+            str(rec.get('id') or ''),
+            str(rec.get('predicted') or ''),
+            f"{cval:.2f}",
+            ok,
+            f"{pt:.3f}",
+            dt,
+        ])
+
+    table = Table(data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e7f2ff')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#0b1f44')),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.HexColor('#f8fafc')]),
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#cbd5e1')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (0, 1), (0, -1), 'CENTER'),  # image column center
+        ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+
+    story.append(table)
+    doc.build(story)
+    return out_pdf_path
