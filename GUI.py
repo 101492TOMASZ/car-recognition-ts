@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
 )
 from PyQt5.QtGui import QPixmap, QFont
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPropertyAnimation
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPropertyAnimation, QEvent
 from PIL import Image
 import torch
 from predict import predict_image
@@ -44,6 +44,12 @@ class CarCropGUI(QWidget):
         self.setWindowTitle("Car Crop & Predict GUI")
         self.setGeometry(100, 100, 960, 720)
         self.setMinimumSize(900, 640)
+
+        # Zablokuj maksymalizację (przycisk + akcja WM)
+        self.setWindowFlag(Qt.WindowMaximizeButtonHint, False)
+        self.setWindowFlag(Qt.WindowMinimizeButtonHint, True)
+        self.setWindowFlag(Qt.WindowCloseButtonHint, True)
+
         self.setStyleSheet("""
             QWidget { background: #f5f7fb; font-family: 'Segoe UI', 'Arial', sans-serif; font-size: 14px; color: #1f2328; }
             QLabel#TitleLabel { font-size: 24px; font-weight: 700; color: #0f141a; margin: 2px 0 10px 0; }
@@ -378,6 +384,12 @@ class CarCropGUI(QWidget):
             self.feedback_saved = True
         except Exception as e:
             QMessageBox.warning(self, 'Błąd', f'Nie można zapisać zgłoszenia: {e}')
+
+    def changeEvent(self, event):
+        # Jeśli WM spróbuje zmaksymalizować okno, przywróć normalny stan
+        if event.type() == QEvent.WindowStateChange and self.windowState() & Qt.WindowMaximized:
+            self.setWindowState(Qt.WindowNoState)
+        super().changeEvent(event)
 
     def closeEvent(self, event):
         # wait for prediction thread to finish or terminate it to avoid crashes

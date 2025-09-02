@@ -80,3 +80,10 @@
 {"timestamp": 1756459722, "image": "/home/tomasz/Pobrane/83bd110f3f824006b1227657c628f83a.jpg", "predicted": "PORSCHE", "confidence": 99.99880790710449, "correct": true}
 {"timestamp": 1756459740, "image": "/home/tomasz/Pobrane/1200-Audi-12.png", "predicted": "AUDI", "confidence": 99.9948263168335, "correct": true}
 {"timestamp": 1756459853, "image": "/home/tomasz/Pobrane/16-9_Golf-4_Wheels-and-tyres.jpg", "predicted": "VOLKSWAGEN", "confidence": 96.51461243629456, "correct": true}
+{"timestamp": 1756460309, "image": "/home/tomasz/Pobrane/16-9_Golf-4_Wheels-and-tyres.jpg", "predicted": "VOLKSWAGEN", "confidence": 96.51461243629456, "correct": true}
+{"timestamp": 1756463722, "image": "/home/tomasz/Pobrane/51rfQHtbzrL._UF894,1000_QL80_.jpg", "predicted": "VOLKSWAGEN", "confidence": 98.39942455291748, "correct": true}
+{"timestamp": 1756463733, "image": "/home/tomasz/Pobrane/maxresdefault.jpg", "predicted": "MERCEDES", "confidence": 38.800248503685, "correct": true}
+{"timestamp": 1756463742, "image": "/home/tomasz/Pobrane/maxresdefault.jpg", "predicted": "MERCEDES", "confidence": 38.800248503685, "correct": true}
+{"timestamp": 1756810291, "image": "/home/tomasz/Pobrane/51rfQHtbzrL._UF894,1000_QL80_.jpg", "predicted": "VOLKSWAGEN", "confidence": 98.39942455291748, "correct": true}
+{"timestamp": 1756810293, "image": "/home/tomasz/Pobrane/51rfQHtbzrL._UF894,1000_QL80_.jpg", "predicted": "VOLKSWAGEN", "confidence": 98.39942455291748, "correct": false, "reported": true}
+{"timestamp": 1756810557, "image": "/home/tomasz/Obrazy/Zrzuty ekranu/Zrzut ekranu z 2025-08-24 16-14-54.png", "predicted": "VOLKSWAGEN", "confidence": 98.78360629081726, "correct": true}
