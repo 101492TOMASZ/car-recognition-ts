@@ -6,8 +6,8 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QDialog,
     QTableWidget, QTableWidgetItem, QHeaderView
 )
-from PyQt5.QtGui import QPixmap, QFont
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPropertyAnimation, QEvent
+from PyQt5.QtGui import QPixmap
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPropertyAnimation, QEvent, QTimer
 from PIL import Image
 import torch
 from predict import predict_image
@@ -90,9 +90,63 @@ class BatchPredictionThread(QThread):
 
 
 class CarCropGUI(QWidget):
-    def __init__(self):
+    def _get_brand_svg_path(self, brand):
+        # Map brand names to SVG file paths in the 'logos' directory
+        brand_map = {
+            'BMW': 'logos/bmw-svgrepo-com.svg',
+            'Audi': 'logos/audi-svgrepo-com.svg',
+            'Mercedes': 'logos/mercedes-svgrepo-com.svg',
+            'Porsche': 'logos/porsche-svgrepo-com.svg',
+            'Volkswagen': 'logos/volkswagen-svgrepo-com.svg',
+        }
+        # Normalize brand name for matching
+        key = str(brand).strip().capitalize()
+        # Try direct match, then lower-case match
+        path = brand_map.get(key)
+        if not path:
+            for k in brand_map:
+                if k.lower() == str(brand).strip().lower():
+                    path = brand_map[k]
+                    break
+        if path and os.path.isfile(path):
+            return path
+        return None
+
+    def _show_brand_overlay(self, brand):
+        """Show a centered semi-transparent SVG logo (watermark style)."""
+        svg_path = self._get_brand_svg_path(brand)
+        if not svg_path:
+            if getattr(self, 'brand_overlay', None):
+                self.brand_overlay.hide()
+            return
+        self._current_brand = brand
+        from PyQt5.QtSvg import QSvgWidget
+        if getattr(self, 'brand_overlay', None):
+            self.brand_overlay.hide()
+            self.brand_overlay.setParent(None)
+        # Make overlay a child of the image_label so it never paints outside
+        # the displayed pixmap area (image_frame has inner margins).
+        self.brand_overlay = QSvgWidget(self.image_label)
+        target_w = int(self.image_label.width() * 0.55)
+        target_h = int(self.image_label.height() * 0.55)
+        self.brand_overlay.setFixedSize(max(60, target_w), max(60, target_h))
+        self.brand_overlay.load(svg_path)
+        self.brand_overlay.setStyleSheet("background: rgba(255,255,255,0.60); border: 1px solid rgba(22,34,46,0.08); border-radius: 20px;")
+        self.brand_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.brand_overlay.show()
+        self._reposition_brand_overlay()
+        try:
+            self._fade_in_widget(self.brand_overlay, duration=380)
+        except Exception:
+            pass
+
+    def eventFilter(self, obj, event):
+        # No hover-hide logic needed now; overlay is passive.
+        return super().eventFilter(obj, event)
+
+    def __init__(self):  # consolidated (removed duplicate earlier definition)
         super().__init__()
-        self.setWindowTitle("Car Crop & Predict GUI")
+        self.setWindowTitle("AutoDentifier")
         self.setGeometry(100, 100, 960, 720)
         self.setMinimumSize(900, 640)
 
@@ -102,112 +156,45 @@ class CarCropGUI(QWidget):
         self.setWindowFlag(Qt.WindowCloseButtonHint, True)
 
         self.setStyleSheet("""
-            QWidget { background: #f5f7fb; font-family: 'Segoe UI', 'Arial', sans-serif; font-size: 14px; color: #1f2328; }
-            QLabel#TitleLabel { font-size: 24px; font-weight: 700; color: #0f141a; margin: 2px 0 10px 0; }
-            QLabel#ResultLabel { font-size: 16px; font-weight: 600; color: #0b72bf; margin: 10px 0 12px 0; background: #ffffff; border: 1px solid #e6e9ee; border-radius: 12px; padding: 10px 14px; }
-            QPushButton { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4f8cff, stop:1 #38e4ae); color: #ffffff; border: none; border-radius: 12px; padding: 9px 18px; font-size: 14px; font-weight: 600; margin: 6px; min-width: 140px; min-height: 36px; }
-            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #5b95ff, stop:1 #48e9b6); }
-            QPushButton:pressed { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3d7df2, stop:1 #2fd09f); }
-            QPushButton:disabled { background: #c7cdd7; color: #f2f4f7; }
-            QFrame#ImageFrame { background: #ffffff; border-radius: 14px; border: 1px solid #e6e9ee; padding: 8px; }
-            QLabel#HeatmapLabel { border-radius: 10px; }
+            QWidget { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #111827, stop:1 #1e293b); font-family: 'Segoe UI', 'Arial'; font-size: 14px; color: #e2e8f0; }
+            QFrame#ShellFrame { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.07); border-radius: 28px; }
+            QFrame#NavPanel { background: rgba(255,255,255,0.04); border-right: 1px solid rgba(255,255,255,0.07); border-radius: 22px; }
+            QLabel#TitleLabel { font-size: 30px; font-weight: 700; color: #f8fafc; margin: 8px 8px 16px 8px; letter-spacing: 1px; }
+            QFrame#ImageFrame { background: rgba(255,255,255,0.10); border-radius: 26px; border: 1px solid rgba(255,255,255,0.09); }
+            QLabel#ImageLabel { background: #0f172a; border-radius: 18px; border: 1px solid rgba(255,255,255,0.05); }
+            QLabel#HeatmapLabel { border-radius: 18px; }
+            QLabel#ResultLabel { font-size: 15px; font-weight: 600; color: #0f172a; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 18px; padding: 10px 18px; margin-top: 14px; }
+            QPushButton { background: #0ea5e9; color: #f1f5f9; border: none; border-radius: 14px; padding: 8px 16px; font-size: 13px; font-weight: 600; margin: 6px 4px; min-width: 140px; }
+            QPushButton:hover { background: #0284c7; }
+            QPushButton:pressed { background: #0369a1; }
+            QPushButton:disabled { background: #334155; color: #64748b; }
+            QPushButton#DangerBtn { background: #dc2626; }
+            QPushButton#DangerBtn:hover { background: #b91c1c; }
+            QPushButton#SecondaryBtn { background: #6366f1; }
+            QPushButton#SecondaryBtn:hover { background: #4f46e5; }
+            QTableWidget { background: #1e293b; gridline-color: #334155; selection-background-color: #334155; }
+            QHeaderView::section { background: #334155; color: #e2e8f0; border: none; padding: 4px 6px; }
+            QMessageBox { background: #1e293b; }
         """)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.yolo = None
         self.classifier = None
         self.idx_to_label = None
-
-        # header
-        self.title_label = QLabel("Car Crop & Predict GUI")
-        self.title_label.setObjectName("TitleLabel")
-        self.title_label.setAlignment(Qt.AlignCenter)
-
-        # image frame
-        self.image_frame = QFrame()
-        self.image_frame.setObjectName("ImageFrame")
-        self.image_frame.setFixedSize(800, 460)
-        self.image_frame.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        # subtle shadow under image frame
-        try:
-            shadow = QGraphicsDropShadowEffect(self.image_frame)
-            shadow.setBlurRadius(18)
-            shadow.setXOffset(0)
-            shadow.setYOffset(6)
-            shadow.setColor(Qt.black)
-            self.image_frame.setGraphicsEffect(shadow)
-        except Exception:
-            pass
-
-        self.image_label = QLabel(self.image_frame)
-        self.image_label.setObjectName("ImageLabel")
-        self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setFixedSize(784, 444)
-        self.image_label.move(8, 8)
-
-        self.heatmap_label = QLabel(self.image_frame)
-        self.heatmap_label.setObjectName("HeatmapLabel")
-        self.heatmap_label.setAlignment(Qt.AlignCenter)
-        self.heatmap_label.setFixedSize(self.image_label.size())
-        self.heatmap_label.move(8, 8)
-        self.heatmap_label.hide()
-
-        # result label
-        self.result_label = QLabel("")
-        self.result_label.setObjectName("ResultLabel")
-        self.result_label.setAlignment(Qt.AlignCenter)
-
-        # buttons
-        self.load_button = QPushButton("Wybierz obraz")
-        self.load_button.clicked.connect(self.load_image)
-        self.test_button = QPushButton("Tryb testowy")
-        self.test_button.clicked.connect(self._open_test_mode)
-        self.heatmap_button = QPushButton("Pokaż heatmapę")
-        self.heatmap_button.setEnabled(False)
-        self.heatmap_button.clicked.connect(self.toggle_heatmap)
-        self.confirm_button = QPushButton("Zgłoś nieprawidłową predykcję")
-        self.confirm_button.setEnabled(False)
-        self.confirm_button.setVisible(False)
-        self.confirm_button.clicked.connect(self._on_confirm_click)
-        self.history_button = QPushButton("Historia")
-        self.history_button.clicked.connect(self._open_history)
-
-        # layout
-        main_layout = QVBoxLayout()
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(16, 12, 16, 12)
-        main_layout.addWidget(self.title_label, alignment=Qt.AlignHCenter)
-        main_layout.addWidget(self.image_frame, alignment=Qt.AlignHCenter)
-        main_layout.addWidget(self.result_label, alignment=Qt.AlignHCenter)
-
-        btns_layout = QHBoxLayout()
-        btns_layout.setSpacing(12)
-        btns_layout.addStretch(1)
-        btns_layout.addWidget(self.load_button)
-        btns_layout.addWidget(self.test_button)
-        btns_layout.addWidget(self.heatmap_button)
-        btns_layout.addWidget(self.confirm_button)
-        btns_layout.addWidget(self.history_button)
-        btns_layout.addStretch(1)
-        main_layout.addLayout(btns_layout)
-
-        self.setLayout(main_layout)
-
-        # internal state
-        self.current_image = None
-        self.current_image_path = None
-        self.pred_thread = None
-        self.last_result = None
-        self.heatmap_data = None
         self.heatmap_visible = False
         self.feedback_saved = False
-        self.load_models()
-        self.confirm_button.setVisible(False)
-        self.confirm_button.setEnabled(False)
-        # container for running animations so they are not garbage-collected
+        self.brand_overlay = None
+        self._build_ui()
+
         self._animations = []
         # ensure db exists
         try:
             init_db()
+        except Exception:
+            pass
+
+        # Zablokuj zmianę rozmiaru okna (stała szerokość/wysokość)
+        try:
+            self.setFixedSize(self.size())  # bazuje na setGeometry powyżej
         except Exception:
             pass
 
@@ -234,6 +221,193 @@ class CarCropGUI(QWidget):
         except Exception:
             pass
 
+    def _build_ui(self):
+        # Wrapper shell frame to create glass effect look
+        shell = QFrame()
+        shell.setObjectName("ShellFrame")
+        shell_layout = QHBoxLayout(shell)
+        shell_layout.setContentsMargins(18, 18, 18, 18)
+        shell_layout.setSpacing(22)
+
+        # Navigation panel
+        nav = QFrame()
+        nav.setObjectName("NavPanel")
+        nav_layout = QVBoxLayout(nav)
+        nav_layout.setContentsMargins(14, 14, 14, 14)
+        nav_layout.setSpacing(10)
+
+        self.title_label = QLabel("AutoDentifier")
+        self.title_label.setObjectName("TitleLabel")
+        self.title_label.setAlignment(Qt.AlignHCenter)
+        nav_layout.addWidget(self.title_label)
+
+        # Buttons
+        self.load_button = QPushButton("Wybierz obraz(y)")
+        self.load_button.clicked.connect(self.load_image)
+        nav_layout.addWidget(self.load_button)
+
+        self.test_button = QPushButton("Tryb testowy")
+        self.test_button.setObjectName("SecondaryBtn")
+        self.test_button.clicked.connect(self._open_test_mode)
+        nav_layout.addWidget(self.test_button)
+
+        self.history_button = QPushButton("Historia")
+        self.history_button.clicked.connect(self._open_history)
+        nav_layout.addWidget(self.history_button)
+
+        self.heatmap_button = QPushButton("Pokaż heatmapę")
+        self.heatmap_button.setEnabled(False)
+        self.heatmap_button.clicked.connect(self.toggle_heatmap)
+        nav_layout.addWidget(self.heatmap_button)
+
+        self.confirm_button = QPushButton("Zgłoś błąd")
+        self.confirm_button.setObjectName("DangerBtn")
+        self.confirm_button.setEnabled(False)
+        self.confirm_button.setVisible(False)
+        self.confirm_button.clicked.connect(self._on_confirm_click)
+        nav_layout.addWidget(self.confirm_button)
+
+        nav_layout.addStretch(1)
+
+        # Content area
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(6, 6, 6, 6)
+        content_layout.setSpacing(12)
+
+        # Image frame & stacked internals (responsive)
+        self.image_frame = QFrame()
+        self.image_frame.setObjectName("ImageFrame")
+        self.image_frame.setMinimumSize(560, 400)
+        self.image_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        try:
+            shadow = QGraphicsDropShadowEffect(self.image_frame)
+            shadow.setBlurRadius(32)
+            shadow.setXOffset(0)
+            shadow.setYOffset(12)
+            shadow.setColor(Qt.black)
+            self.image_frame.setGraphicsEffect(shadow)
+        except Exception:
+            pass
+
+        # Layout-managed image label
+        from PyQt5.QtWidgets import QVBoxLayout as _QVBox
+        img_layout = _QVBox(self.image_frame)
+        img_layout.setContentsMargins(18, 18, 18, 18)
+        img_layout.setSpacing(0)
+        self.image_label = QLabel()
+        self.image_label.setObjectName("ImageLabel")
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        img_layout.addWidget(self.image_label)
+        # Heatmap overlay as child of image_label (absolute positioning within)
+        self.heatmap_label = QLabel(self.image_label)
+        self.heatmap_label.setObjectName("HeatmapLabel")
+        self.heatmap_label.setAlignment(Qt.AlignCenter)
+        self.heatmap_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.heatmap_label.hide()
+
+        content_layout.addWidget(self.image_frame, alignment=Qt.AlignHCenter)
+
+        self.result_label = QLabel("Gotowy – wybierz obraz")
+        self.result_label.setObjectName("ResultLabel")
+        self.result_label.setAlignment(Qt.AlignCenter)
+        content_layout.addWidget(self.result_label, alignment=Qt.AlignHCenter)
+
+        shell_layout.addWidget(nav)
+        shell_layout.addLayout(content_layout, stretch=1)
+
+        outer = QVBoxLayout()
+        outer.setContentsMargins(30, 30, 30, 30)
+        outer.addWidget(shell)
+        self.setLayout(outer)
+
+    def _reposition_brand_overlay(self):
+        """Center SVG overlay within image_label bounds (respects margins)."""
+        if not getattr(self, 'brand_overlay', None):
+            return
+        try:
+            frame_w = self.image_label.width()
+            frame_h = self.image_label.height()
+            if frame_w <= 0 or frame_h <= 0:
+                return
+            target_w = int(frame_w * 0.55)
+            target_h = int(frame_h * 0.55)
+            self.brand_overlay.setFixedSize(max(60, target_w), max(60, target_h))
+            # Place relative to image_label (parent)
+            x = (frame_w - self.brand_overlay.width()) // 2
+            y = (frame_h - self.brand_overlay.height()) // 2
+            self.brand_overlay.move(x, y)
+            self.brand_overlay.raise_()
+        except Exception:
+            pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        try:
+            # Ensure heatmap overlay always fills image_label
+            self.heatmap_label.setGeometry(0, 0, self.image_label.width(), self.image_label.height())
+            if hasattr(self, 'current_image_path') and self.current_image_path:
+                pix = QPixmap(self.current_image_path)
+                scaled = pix.scaled(self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.image_label.setPixmap(scaled)
+            if self.heatmap_visible:
+                self._render_heatmap_overlay()
+        except Exception:
+            pass
+        self._reposition_brand_overlay()
+
+    def event(self, e):
+        """Handle move/activate to correct any transient painting drift after alt-tab or dragging."""
+        et = e.type()
+        if et in (QEvent.Move, QEvent.WindowActivate, QEvent.ApplicationActivate):
+            # Defer to end of event loop so geometry is final
+            QTimer.singleShot(0, self._post_window_adjust)
+        return super().event(e)
+
+    def _post_window_adjust(self):
+        try:
+            if self.heatmap_visible:
+                self._render_heatmap_overlay()
+            self._reposition_brand_overlay()
+        except Exception:
+            pass
+
+    def _render_heatmap_overlay(self):
+        """Regenerate the centered heatmap overlay onto transparent canvas sized like image_label."""
+        if not self.heatmap_data:
+            return
+        try:
+            import base64
+            from PyQt5.QtGui import QPixmap, QPainter
+            img_bytes = base64.b64decode(self.heatmap_data)
+            qimg = QPixmap()
+            if not qimg.loadFromData(img_bytes, 'PNG'):
+                return
+            target = self.image_label.size()
+            scaled = qimg.scaled(target, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            canvas = QPixmap(target)
+            canvas.fill(Qt.transparent)
+            p = QPainter(canvas)
+            x = (canvas.width() - scaled.width()) // 2
+            y = (canvas.height() - scaled.height()) // 2
+            p.drawPixmap(x, y, scaled)
+            p.end()
+            self.heatmap_label.setPixmap(canvas)
+            self.heatmap_label.raise_()
+        except Exception:
+            pass
+
+    def _refresh_base_image(self):
+        """Rescale and set the original image pixmap (used after hiding heatmap)."""
+        if not hasattr(self, 'current_image_path') or not self.current_image_path:
+            return
+        try:
+            pix = QPixmap(self.current_image_path)
+            scaled = pix.scaled(self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.image_label.setPixmap(scaled)
+        except Exception:
+            pass
+
     def load_models(self):
         if self.yolo is None:
             try:
@@ -255,8 +429,7 @@ class CarCropGUI(QWidget):
             self.feedback_saved = False
         except Exception:
             pass
-
-        paths, _ = QFileDialog.getOpenFileNames(self, 'Wybierz obraz(y)', '', 'Images (*.png *.jpg *.jpeg *.bmp)')
+        paths, _ = QFileDialog.getOpenFileNames(self, 'Wybierz obraz(y)', '', 'Images (*.png *.jpg *.jpeg *.bmp *.webp)')
         if not paths:
             return
         if len(paths) == 1:
@@ -270,9 +443,19 @@ class CarCropGUI(QWidget):
         try:
             self.confirm_button.setVisible(False)
             self.confirm_button.setEnabled(False)
-            self.heatmap_label.hide()
+            # ensure stacked layout on image
+            # no stacked layout now
             self.heatmap_button.setEnabled(False)
             self.result_label.setText(f'Batch: przetwarzanie {len(paths)} obrazów...')
+        except Exception:
+            pass
+
+        # Ensure YOLO model is loaded before batch predictions
+        try:
+            if self.yolo is None:
+                self.result_label.setText('Ładowanie modelu YOLO...')
+                QApplication.processEvents()
+                self.load_models()
         except Exception:
             pass
 
@@ -300,7 +483,7 @@ class CarCropGUI(QWidget):
         # reset/close any existing heatmap and disable the heatmap button until a new one is generated
         try:
             self.heatmap_label.clear()
-            self.heatmap_label.hide()
+            # ensure base visible (heatmap overlays anyway)
             self.heatmap_visible = False
             self.heatmap_button.setEnabled(False)
             self.heatmap_button.setText("Pokaż heatmapę")
@@ -309,7 +492,15 @@ class CarCropGUI(QWidget):
 
         self.result_label.setText('Predicting...')
 
-        # start prediction thread
+    # start prediction thread
+    # Ensure YOLO model is loaded before single prediction
+        try:
+            if self.yolo is None:
+                self.result_label.setText('Ładowanie modelu YOLO...')
+                QApplication.processEvents()
+                self.load_models()
+        except Exception:
+            pass
         self.pred_thread = PredictionThread(self.current_image_path, self.yolo, None, None, device=self.device)
         self.pred_thread.finished.connect(self._on_pred_finished)
         self.pred_thread.error.connect(self._on_pred_error)
@@ -434,6 +625,8 @@ class CarCropGUI(QWidget):
             self.last_result = None
             msg = res.get('message') or 'Zdjęcie nie przedstawia pojazdu'
             self.result_label.setText(msg)
+            if hasattr(self, 'brand_overlay') and self.brand_overlay:
+                self.brand_overlay.hide()
             return
         brand = res.get('brand')
         conf = res.get('confidence')
@@ -446,6 +639,7 @@ class CarCropGUI(QWidget):
             self.heatmap_label.clear()
         # store last result
         self.last_result = {'brand': brand, 'confidence': conf, 'image_path': self.current_image_path}
+        self._show_brand_overlay(brand)
         # auto-save as correct by default (single entry)
         if not self.feedback_saved:
             try:
@@ -485,44 +679,44 @@ class CarCropGUI(QWidget):
                 self.result_label.setText(f"Brand={brand}")
 
     def toggle_heatmap(self):
+        # Use QStackedLayout to swap exactly - prevents layout shift.
         if not self.heatmap_data:
             self.heatmap_label.clear()
             self.heatmap_label.hide()
             self.heatmap_button.setText("Pokaż heatmapę")
             self.heatmap_visible = False
+            if getattr(self, 'brand_overlay', None):
+                self.brand_overlay.show(); self._reposition_brand_overlay()
             return
         if self.heatmap_visible:
-            self.heatmap_label.hide()
-            self.heatmap_button.setText("Pokaż heatmapę")
-            self.heatmap_visible = False
-            return
-        import base64
-        from PyQt5.QtGui import QPixmap
-        try:
-            img_bytes = base64.b64decode(self.heatmap_data)
-            qimg = QPixmap()
-            qimg.loadFromData(img_bytes, 'PNG')
-            target = self.image_label.size()
-            scaled = qimg.scaled(target, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            canvas = QPixmap(target)
-            canvas.fill(Qt.transparent)
-            from PyQt5.QtGui import QPainter
-            painter = QPainter(canvas)
-            x = (canvas.width() - scaled.width()) // 2
-            y = (canvas.height() - scaled.height()) // 2
-            painter.drawPixmap(x, y, scaled)
-            painter.end()
-            self.heatmap_label.setPixmap(canvas)
-            # set initial invisible and animate fade-in
-            self.heatmap_label.setVisible(True)
+            # Hiding heatmap overlay
             try:
-                self._fade_in_widget(self.heatmap_label, duration=350)
+                self.heatmap_label.hide()
+                self.heatmap_label.clear()
             except Exception:
                 pass
-            self.heatmap_button.setText("Schowaj heatmapę")
-            self.heatmap_visible = True
-        except Exception as e:
-            print(f"show heatmap error: {e}")
+            self._refresh_base_image()
+            self.heatmap_button.setText("Pokaż heatmapę")
+            self.heatmap_visible = False
+            if getattr(self, 'brand_overlay', None):
+                try:
+                    self.brand_overlay.show()
+                    self._reposition_brand_overlay()
+                    self.brand_overlay.raise_()
+                except Exception:
+                    pass
+            return
+        # Show overlay
+        self._render_heatmap_overlay()
+        try:
+            self._fade_in_widget(self.heatmap_label, duration=320)
+        except Exception:
+            pass
+        self.heatmap_label.show()
+        self.heatmap_button.setText("Schowaj heatmapę")
+        self.heatmap_visible = True
+        if getattr(self, 'brand_overlay', None):
+            self.brand_overlay.hide()
 
     def show_heatmap(self):
         self.toggle_heatmap()
