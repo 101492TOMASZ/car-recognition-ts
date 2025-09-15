@@ -332,3 +332,35 @@ def export_records_table_pdf(rids, out_pdf_path, db_path=None):
     story.append(table)
     doc.build(story)
     return out_pdf_path
+
+
+def delete_records(rids, db_path=None, remove_images=True):
+    """Delete records by IDs. Optionally remove saved images from IMAGE_DIR.
+
+    Returns number of deleted rows.
+    """
+    if not rids:
+        return 0
+    dbp = db_path or DB_NAME
+    conn = sqlite3.connect(dbp)
+    cur = conn.cursor()
+    deleted = 0
+    try:
+        if remove_images:
+            # fetch saved_image paths first
+            q_marks = ",".join(["?"] * len(rids))
+            cur.execute(f"SELECT saved_image FROM records WHERE id IN ({q_marks})", tuple(rids))
+            rows = cur.fetchall()
+            for (p,) in rows:
+                if p and isinstance(p, str) and os.path.isfile(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+        q_marks = ",".join(["?"] * len(rids))
+        cur.execute(f"DELETE FROM records WHERE id IN ({q_marks})", tuple(rids))
+        deleted = cur.rowcount if hasattr(cur, 'rowcount') else len(rids)
+        conn.commit()
+    finally:
+        conn.close()
+    return deleted

@@ -2,6 +2,18 @@
 
 Aplikacja desktopowa PyQt5 do rozpoznawania marek pojazdów. YOLOv8 wykrywa pojazd (z priorytetem największego i najbardziej wycentrowanego boxu), wycina kadr, MobileNetV2 klasyfikuje markę (wagi w `runs/*/final.pth`), Grad‑CAM wyjaśnia decyzję, a wyniki lądują w SQLite z historią, statystykami i eksportem.
 
+## Co działa już (MVP)
+- Jedno‑plikowa predykcja w GUI (z overlay Grad‑CAM i znakiem wodnym SVG marki).
+- Tryb batch: wybór wielu plików, tabela wyników, eksport do CSV.
+- Detekcja YOLOv8 → center‑biased crop → MobileNetV2 klasyfikacja.
+- Heatmapa Grad‑CAM jako pół‑transparentny overlay z przełącznikiem widoczności.
+- Zapis wyników do SQLite + kopie obrazów w `.db_images/` dla stabilnych eksportów.
+- Okno historii: filtrowanie, podgląd, statystyki, eksport wybranych/all do PDF.
+- Dziennik zdarzeń `history.jsonl` do analityki/feedbacku (correct=False po zgłoszeniu błędu).
+- Obsługa popularnych formatów obrazów: `png, jpg, jpeg, bmp, webp`.
+- Leniwe ładowanie YOLO, cache klasyfikatora i mapy etykiet.
+- Twarde bramkowanie „brak pojazdu” (bez zapisu, jasny komunikat w GUI).
+
 ## Najważniejsze funkcje (stan aktualny)
 **Pipeline / AI**
 - YOLOv8 → wybór kadru (największy box z biasem na środek) → MobileNetV2 → Grad‑CAM overlay (jedno przejście forward/backward).
@@ -34,9 +46,17 @@ Aplikacja desktopowa PyQt5 do rozpoznawania marek pojazdów. YOLOv8 wykrywa poja
 ## Wymagania i instalacja
 - Python 3.10+ (CUDA opcjonalnie – jeśli dostępna, model sam przejdzie na GPU)
 
+Linux/macOS (Bash):
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Windows (PowerShell):
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 

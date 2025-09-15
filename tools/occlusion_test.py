@@ -11,7 +11,7 @@ def occlusion_test(image_path, step=40, window=80, device='cpu', out_path='occlu
     w, h = img.size
 
     # baseline prediction
-    baseline = predict_image(image_path, None, None, None, device=device)
+    baseline = predict_image(image_path, None, None, None, device=device, verbose=False, logger=None)
     base_brand = baseline.get('brand')
     base_conf = baseline.get('confidence', 0.0)
     if base_brand is None:
@@ -42,7 +42,7 @@ def occlusion_test(image_path, step=40, window=80, device='cpu', out_path='occlu
                 tmp_files.append(tmp_path)
 
                 # predict masked image
-                res = predict_image(tmp_path, None, None, None, device=device)
+                res = predict_image(tmp_path, None, None, None, device=device, verbose=False, logger=None)
                 pred_brand = res.get('brand')
                 pred_conf = res.get('confidence', 0.0)
 

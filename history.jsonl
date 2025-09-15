@@ -151,3 +151,15 @@
 {"timestamp": 1757501858, "image": "C:/Users/Tomek/Desktop/Adnotacja 2025-09-10 115324.png", "predicted": "AUDI", "confidence": 99.2373526096344, "correct": true}
 {"timestamp": 1757501882, "image": "C:/Users/Tomek/Downloads/FBG1IMJVgAEAOD8.jpg", "predicted": "BMW", "confidence": 75.95357298851013, "correct": true}
 {"timestamp": 1757501940, "image": "C:/Users/Tomek/Downloads/FBG1IMJVgAEAOD8.jpg", "predicted": "BMW", "confidence": 75.95357298851013, "correct": true}
+{"timestamp": 1757502645, "image": "C:/Users/Tomek/Desktop/Adnotacja 2025-09-10 115324.png", "predicted": "AUDI", "confidence": 99.2373526096344, "correct": true}
+{"timestamp": 1757503254, "image": "C:/Users/Tomek/Downloads/FBG1IMJVgAEAOD8.jpg", "predicted": "BMW", "confidence": 75.95357298851013, "correct": true}
+{"timestamp": 1757503367, "image": "C:/Users/Tomek/Desktop/Adnotacja 2025-09-10 115324.png", "predicted": "AUDI", "confidence": 99.2373526096344, "correct": true}
+{"timestamp": 1757503370, "image": "C:/Users/Tomek/Desktop/image;s=1000x700.webp", "predicted": "BMW", "confidence": 94.12081241607666, "correct": true}
+{"timestamp": 1757503485, "image": "C:/Users/Tomek/Desktop/Adnotacja 2025-09-10 115324.png", "predicted": "AUDI", "confidence": 99.2373526096344, "correct": true}
+{"timestamp": 1757504019, "image": "C:/Users/Tomek/Downloads/FBG1IMJVgAEAOD8.jpg", "predicted": "BMW", "confidence": 75.95357298851013, "correct": true}
+{"timestamp": 1757504131, "image": "C:/Users/Tomek/Desktop/Adnotacja 2025-09-10 115324.png", "predicted": "AUDI", "confidence": 99.2373526096344, "correct": true}
+{"timestamp": 1757504314, "image": "C:/Users/Tomek/Downloads/FBG1IMJVgAEAOD8.jpg", "predicted": "BMW", "confidence": 75.95357298851013, "correct": true}
+{"timestamp": 1757523175, "image": "C:/Users/Tomek/Downloads/IMG_20241026_220803.jpg", "predicted": "PORSCHE", "confidence": 62.525010108947754, "correct": false, "reported": true}
+{"timestamp": 1757531281, "image": "C:/Users/Tomek/Downloads/IMG_20241026_220803.jpg", "predicted": "PORSCHE", "confidence": 62.525010108947754, "correct": false, "reported": true}
+{"timestamp": 1757933287, "image": "C:/Users/Tomek/Documents/car/car-recognition-ts/dataset_german/BMW/000122.jpg", "predicted": "BMW", "confidence": 99.99972581863403, "correct": false, "reported": true}
+{"timestamp": 1757934191, "image": "C:/Users/Tomek/Desktop/image-54-800x500.png", "predicted": "VOLKSWAGEN", "confidence": 99.91231560707092, "correct": false, "reported": true}

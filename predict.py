@@ -108,6 +108,7 @@ def predict_image(
     min_conf=0.25,
     add_margin=0.0,
     verbose=True,
+    logger=None,
 ):
     """Predict brand for a single image.
 
@@ -119,8 +120,12 @@ def predict_image(
 
     Returns dict: {brand, confidence, message, heatmap (base64 PNG or None), no_vehicle(bool)}
     """
+    log_debug = (logger.debug if logger else print) if verbose else (lambda *a, **k: None)
+    log_info = logger.info if logger else print
+    log_warn = logger.warning if logger else print
+    log_err = logger.error if logger else print
     if verbose:
-        print(f"[predict_image] Predicting for: {image_path}")
+        log_debug(f"[predict_image] Predicting for: {image_path}")
 
     # Lazy / cached classifier load
     global _CACHED_CLASSIFIER, _CACHED_LABELS, _CACHED_PTH
@@ -128,11 +133,11 @@ def predict_image(
         best_pth, label_map = find_latest_best_checkpoint('runs')
         if best_pth is None:
             if verbose:
-                print("[predict_image] No classifier checkpoint found in runs/!")
+                log_warn("[predict_image] No classifier checkpoint found in runs/!")
             return {'brand': None, 'confidence': None, 'message': 'No classifier checkpoint found'}
         if _CACHED_CLASSIFIER is None or _CACHED_PTH != best_pth:
             if verbose:
-                print(f"[predict_image] Loading classifier: {best_pth}")
+                log_info(f"[predict_image] Loading classifier: {best_pth}")
             _CACHED_CLASSIFIER, _CACHED_LABELS = load_classifier(best_pth, label_map, device=device)
             _CACHED_PTH = best_pth
         classifier, idx_to_label = _CACHED_CLASSIFIER, _CACHED_LABELS
@@ -174,7 +179,7 @@ def predict_image(
         except Exception:
             xyxy, conf, cls = [], [], []
         if verbose:
-            print(f"[predict_image] YOLO found {len(xyxy)} boxes.")
+            log_debug(f"[predict_image] YOLO found {len(xyxy)} boxes.")
         # Vehicle gating & crop selection
         try:
             names = None
@@ -216,7 +221,7 @@ def predict_image(
         if require_vehicle and not candidates:
             msg = 'Zdjęcie nie przedstawia pojazdu'
             if verbose:
-                print(f"[predict_image] {msg} — aborting classification.")
+                log_info(f"[predict_image] {msg} — aborting classification.")
             return {'brand': None, 'confidence': None, 'message': msg, 'heatmap': None, 'no_vehicle': True}
 
         # Select crop: prefer largest VEHICLE box; tie-break by closeness to image center.
@@ -317,19 +322,19 @@ def predict_image(
                 heatmap_img = base64.b64encode(buf.getvalue()).decode('utf-8')
             except Exception as e:
                 if verbose:
-                    print(f"[predict_image] Grad-CAM postprocess failed: {e}")
+                    log_warn(f"[predict_image] Grad-CAM postprocess failed: {e}")
                 heatmap_img = None
         else:
             heatmap_img = None
 
         if verbose:
-            print(f"[predict_image] Using {crop_info}")
-            print(f"[predict_image] Tensor shape: {image_tensor.shape}, min={image_tensor.min().item():.4f}, max={image_tensor.max().item():.4f}")
-            print(f"[predict_image] Raw logits: {out.detach().cpu().numpy()}")
-            print(f"[predict_image] Softmax: {probs.cpu().numpy()}")
-            print(f"[predict_image] Predicted idx: {predicted_idx}")
-            print(f"[predict_image] idx_to_label: {idx_to_label}")
-            print(f"[predict_image] Result: brand={predicted_label}, confidence={confidence:.2f}%")
+            log_debug(f"[predict_image] Using {crop_info}")
+            log_debug(f"[predict_image] Tensor shape: {image_tensor.shape}, min={image_tensor.min().item():.4f}, max={image_tensor.max().item():.4f}")
+            log_debug(f"[predict_image] Raw logits: {out.detach().cpu().numpy()}")
+            log_debug(f"[predict_image] Softmax: {probs.cpu().numpy()}")
+            log_debug(f"[predict_image] Predicted idx: {predicted_idx}")
+            log_debug(f"[predict_image] idx_to_label: {idx_to_label}")
+            log_info(f"[predict_image] Result: brand={predicted_label}, confidence={confidence:.2f}%")
 
         return {
             'brand': predicted_label,
@@ -341,5 +346,5 @@ def predict_image(
     except Exception as e:
         tb = traceback.format_exc()
         if verbose:
-            print(f"[predict_image] ERROR: {e}\n{tb}")
+            log_err(f"[predict_image] ERROR: {e}\n{tb}")
         return {'brand': None, 'confidence': None, 'message': f'{e}\n{tb}', 'heatmap': None, 'no_vehicle': False}

@@ -1,0 +1,15 @@
+model:
+  yolo_weights: yolov8s.pt
+  runs_dir: runs
+  min_conf: 0.25
+  device_preference: auto  # cpu | cuda | auto
+app:
+  auto_mark_correct: false   # teraz wymaga ręcznej akceptacji
+  history_file: history.jsonl
+  db_path: car_history.db
+logging:
+  level: INFO
+  file: logs/app.log
+gui:
+  fixed_size: true
+  show_model_info: true
