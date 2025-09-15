@@ -105,6 +105,23 @@ pytest -q
 
 Uwaga: jeśli uruchamiasz testy ze skryptów w `tools/`, dodaj plik `tools/conftest.py`, który dopisze katalog repo do `sys.path` (aby moduły jak `predict` były widoczne).
 
+## Build EXE (jeden plik)
+- Zainstaluj zależności w wirtualnym środowisku (`.venv`).
+- Zbuduj exe:
+	- w VS Code: uruchom task "Build AutoDentifier (onefile)".
+	- lub w PowerShell:
+
+```powershell
+.\.venv\Scripts\pyinstaller.exe --clean --noconfirm .\car_app.spec
+```
+
+Wynik: `dist/AutoDentifier.exe` (samowystarczalny).
+
+Notatki runtime:
+- Wbudowane są: `config.yaml`, `yolov8s.pt`, `logos/`, `samples/`, oraz cały katalog `runs/` (jeśli istnieje w repo podczas budowy).
+- Pliki użytkownika (baza, logi, kopie obrazów) trafiają do `%LOCALAPPDATA%/AutoDentifier`.
+- Aplikacja używa ścieżek kompatybilnych z PyInstaller onefile (`sys._MEIPASS`).
+
 ## Rozwiązywanie problemów
 | Problem | Rozwiązanie |
 |--------|-------------|

@@ -2,13 +2,14 @@ import sqlite3
 import os
 import time
 from pathlib import Path
+from utils_paths import db_path as _db_path, image_dir as _image_dir
 
-DB_NAME = os.path.join(os.path.dirname(__file__), 'car_history.db')
-# hidden directory for saved images (dot-prefixed so it's hidden on Unix-like systems)
-IMAGE_DIR = os.path.join(os.path.dirname(__file__), '.db_images')
+DB_NAME = str(_db_path())
+# directory for saved images lives in cache
+IMAGE_DIR = str(_image_dir())
 
 def init_db(db_path=None):
-    dbp = db_path or DB_NAME
+    dbp = str(db_path or DB_NAME)
     conn = sqlite3.connect(dbp)
     cur = conn.cursor()
     cur.execute('''
@@ -57,7 +58,7 @@ def save_image_copy(src_path, prefix=None):
         return dst
 
 def insert_record(image_path, saved_image, predicted, confidence, correct, processing_time, timestamp, db_path=None):
-    dbp = db_path or DB_NAME
+    dbp = str(db_path or DB_NAME)
     conn = sqlite3.connect(dbp)
     cur = conn.cursor()
     cur.execute('''INSERT INTO records (image_path, saved_image, predicted, confidence, correct, processing_time, timestamp)
@@ -68,7 +69,7 @@ def insert_record(image_path, saved_image, predicted, confidence, correct, proce
     return rid
 
 def get_all_records(db_path=None):
-    dbp = db_path or DB_NAME
+    dbp = str(db_path or DB_NAME)
     conn = sqlite3.connect(dbp)
     cur = conn.cursor()
     cur.execute('SELECT id, image_path, saved_image, predicted, confidence, correct, processing_time, timestamp FROM records ORDER BY timestamp DESC')
@@ -78,7 +79,7 @@ def get_all_records(db_path=None):
     return [dict(zip(keys, r)) for r in rows]
 
 def get_record(rid, db_path=None):
-    dbp = db_path or DB_NAME
+    dbp = str(db_path or DB_NAME)
     conn = sqlite3.connect(dbp)
     cur = conn.cursor()
     cur.execute('SELECT id, image_path, saved_image, predicted, confidence, correct, processing_time, timestamp FROM records WHERE id=?', (rid,))
@@ -226,7 +227,7 @@ def export_records_pdf(rids, out_pdf_path, db_path=None):
 
 def update_record_correct(rid, correct, db_path=None):
     """Update the 'correct' flag for a record."""
-    dbp = db_path or DB_NAME
+    dbp = str(db_path or DB_NAME)
     conn = sqlite3.connect(dbp)
     cur = conn.cursor()
     cur.execute('UPDATE records SET correct=? WHERE id=?', (int(bool(correct)), rid))
@@ -341,7 +342,7 @@ def delete_records(rids, db_path=None, remove_images=True):
     """
     if not rids:
         return 0
-    dbp = db_path or DB_NAME
+    dbp = str(db_path or DB_NAME)
     conn = sqlite3.connect(dbp)
     cur = conn.cursor()
     deleted = 0

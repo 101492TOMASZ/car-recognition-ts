@@ -5,6 +5,7 @@ from torchvision import transforms
 import traceback
 import os
 import json
+from utils_paths import resolve_asset_path
 
 # Reusable transforms (avoid recreating each call)
 _CLASSIFY_TRANSFORM = transforms.Compose([
@@ -18,9 +19,68 @@ _CACHED_CLASSIFIER = None
 _CACHED_LABELS = None
 _CACHED_PTH = None
 
-def find_latest_best_checkpoint(runs_dir='runs'):
-    if not os.path.isdir(runs_dir):
-        return None, {}
+def find_latest_best_checkpoint(runs_dir=None):
+    """Find the newest classifier checkpoint and its label map.
+
+    Priority:
+    1) In runs/<exp>/, prefer final.pth; fallback to best.pth. Choose newest mtime across runs.
+    2) Fallback to top-level final.pth; then best.pth; label_map.json alongside if present.
+    """
+    # Prefer bundled runs/ inside the app when frozen; fall back to CWD 'runs'
+    if runs_dir is None:
+        try:
+            candidate = str(resolve_asset_path('runs'))
+            runs_dir = candidate if os.path.isdir(candidate) else 'runs'
+        except Exception:
+            runs_dir = 'runs'
+    bests = []
+    if os.path.isdir(runs_dir):
+        try:
+            for name in os.listdir(runs_dir):
+                p = os.path.join(runs_dir, name)
+                if not os.path.isdir(p):
+                    continue
+                cand_final = os.path.join(p, 'final.pth')
+                cand_best = os.path.join(p, 'best.pth')
+                cand = None
+                if os.path.isfile(cand_final):
+                    cand = cand_final
+                elif os.path.isfile(cand_best):
+                    cand = cand_best
+                if cand is None:
+                    continue
+                lm = os.path.join(p, 'label_map.json')
+                label_map = {}
+                if os.path.isfile(lm):
+                    try:
+                        with open(lm, 'r') as f:
+                            label_map = json.load(f)
+                    except Exception:
+                        label_map = {}
+                try:
+                    mtime = os.path.getmtime(cand)
+                except Exception:
+                    mtime = 0
+                bests.append((mtime, cand, label_map))
+        except Exception:
+            pass
+    if bests:
+        bests.sort(reverse=True)
+        return bests[0][1], bests[0][2]
+    # Fallback to top-level files bundled next to the app
+    for fname in ('final.pth', 'best.pth'):
+        single_pth = str(resolve_asset_path(fname))
+        if os.path.isfile(single_pth):
+            single_map = str(resolve_asset_path('label_map.json'))
+            label_map = {}
+            if os.path.isfile(single_map):
+                try:
+                    with open(single_map, 'r') as f:
+                        label_map = json.load(f)
+                except Exception:
+                    label_map = {}
+            return single_pth, label_map
+    return None, {}
     bests = []
     for name in os.listdir(runs_dir):
         p = os.path.join(runs_dir, name)

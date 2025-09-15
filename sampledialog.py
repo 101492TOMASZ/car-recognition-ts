@@ -1,4 +1,5 @@
 import os
+from utils_paths import samples_dirs
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QHBoxLayout, QPushButton, QMessageBox,
     QAbstractItemView, QListView
@@ -85,11 +86,7 @@ class SampleDialog(QDialog):
                 self.imagesSelected.emit(paths)
 
     def _load_samples(self):
-        root = os.path.dirname(os.path.abspath(__file__))
-        candidates = [
-            os.path.join(root, 'samples'),
-            os.path.join(root, 'tools', 'samples'),
-        ]
+        candidates = [str(p) for p in samples_dirs()]
         exts = {'.png', '.jpg', '.jpeg', '.bmp'}
         paths = []
         for d in candidates:

@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import yaml
+from utils_paths import logs_file, runs_dir as _runs_dir, yolo_weights_path, resolve_asset_path, cache_dir
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QFileDialog, QHBoxLayout, QMessageBox,
     QFrame, QSizePolicy, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QDialog,
@@ -198,13 +199,16 @@ class CarCropGUI(QWidget):
         self.config = self._load_config()
         self.device = self._choose_device(self.config.get('model', {}).get('device_preference', 'auto'))
         # services
+        # Use cache/logs location for bundled exe
+        log_path = self.config.get('logging', {}).get('file') if self.config.get('logging') else None
+        log_file_final = log_path if (log_path and os.path.isabs(log_path)) else str(logs_file())
         self.logger = setup_logger(
             level=self.config.get('logging', {}).get('level', 'INFO'),
-            logfile=self.config.get('logging', {}).get('file', 'logs/app.log')
+            logfile=log_file_final
         )
         self.pred_service = PredictionService(
-            yolo_weights=self.config.get('model', {}).get('yolo_weights', 'yolov8s.pt'),
-            runs_dir=self.config.get('model', {}).get('runs_dir', 'runs'),
+            yolo_weights=str(yolo_weights_path(self.config.get('model', {}).get('yolo_weights', 'yolov8s.pt'))),
+            runs_dir=str(_runs_dir()),
             device=self.device,
             logger=self.logger,
             min_conf=float(self.config.get('model', {}).get('min_conf', 0.25))
@@ -281,7 +285,7 @@ class CarCropGUI(QWidget):
         self.title_label.setAlignment(Qt.AlignHCenter)
         nav_layout.addWidget(self.title_label)
 
-        self.model_info_label = QLabel("Model: (ładowanie...)")
+        self.model_info_label = QLabel("Status: Czekam na obraz")
         self.model_info_label.setWordWrap(True)
         self.model_info_label.setStyleSheet("background: transparent;")
         nav_layout.addWidget(self.model_info_label)
@@ -290,7 +294,7 @@ class CarCropGUI(QWidget):
         self.load_button.clicked.connect(self.load_image)
         nav_layout.addWidget(self.load_button)
 
-        self.test_button = QPushButton("Tryb testowy")
+        self.test_button = QPushButton("Przykładowe obrazy")
         self.test_button.setObjectName("SecondaryBtn")
         self.test_button.clicked.connect(self._open_test_mode)
         nav_layout.addWidget(self.test_button)
@@ -299,20 +303,7 @@ class CarCropGUI(QWidget):
         self.history_button.clicked.connect(self._open_history)
         nav_layout.addWidget(self.history_button)
 
-        # Icon-only logs button
-        self.logs_button = QToolButton()
-        self.logs_button.setToolTip("Logi")
-        try:
-            self.logs_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
-        except Exception:
-            pass
-        try:
-            self.logs_button.setIconSize(QSize(20, 20))
-            self.logs_button.setAutoRaise(True)
-        except Exception:
-            pass
-        self.logs_button.clicked.connect(self._open_logs_viewer)
-        nav_layout.addWidget(self.logs_button)
+        
 
         self.heatmap_button = QPushButton("Pokaż heatmapę")
         self.heatmap_button.setEnabled(False)
@@ -343,6 +334,21 @@ class CarCropGUI(QWidget):
         nav_layout.addWidget(self.theme_button)
 
         nav_layout.addStretch(1)
+
+        # Icon-only logs button
+        self.logs_button = QToolButton()
+        self.logs_button.setToolTip("Logi")
+        try:
+            self.logs_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
+        except Exception:
+            pass
+        try:
+            self.logs_button.setIconSize(QSize(20, 20))
+            self.logs_button.setAutoRaise(True)
+        except Exception:
+            pass
+        self.logs_button.clicked.connect(self._open_logs_viewer)
+        nav_layout.addWidget(self.logs_button)
 
         # Content area
         content_layout = QVBoxLayout()
@@ -382,7 +388,7 @@ class CarCropGUI(QWidget):
 
         content_layout.addWidget(self.image_frame, alignment=Qt.AlignHCenter)
 
-        self.result_label = QLabel("Gotowy – wybierz obraz")
+        self.result_label = QLabel("Wybierz obraz")
         self.result_label.setObjectName("ResultLabel")
         self.result_label.setAlignment(Qt.AlignCenter)
         try:
@@ -751,7 +757,8 @@ class CarCropGUI(QWidget):
         return 'cpu'
 
     def _load_config(self):
-        path = os.path.join(os.path.dirname(__file__), 'config.yaml')
+        # Prefer config.yaml next to the executable or script
+        path = str(resolve_asset_path('config.yaml'))
         if not os.path.isfile(path):
             return {}
         try:
@@ -1013,7 +1020,7 @@ class CarCropGUI(QWidget):
         if auto_mark and not self.feedback_saved:
             try:
                 entry = {'timestamp': int(time.time()), 'image': self.last_result.get('image_path'), 'predicted': self.last_result.get('brand'), 'confidence': float(self.last_result.get('confidence') or 0.0), 'correct': True}
-                hist_path = os.path.join(os.path.dirname(__file__), 'history.jsonl')
+                hist_path = os.path.join(str(cache_dir()), 'history.jsonl')
                 with open(hist_path, 'a', encoding='utf-8') as f:
                     f.write(json.dumps(entry, ensure_ascii=False) + '\n')
                 self.feedback_saved = True
@@ -1102,7 +1109,8 @@ class CarCropGUI(QWidget):
     def _open_logs_viewer(self):
         """Modeless viewer logów na żywo (tail)."""
         try:
-            path = self.config.get('logging', {}).get('file', 'logs/app.log') if getattr(self, 'config', None) else 'logs/app.log'
+            # Point viewer to the same file used by setup_logger (in cache)
+            path = str(logs_file())
             if self.log_viewer and self.log_viewer.isVisible():
                 self.log_viewer.raise_()
                 self.log_viewer.activateWindow()
@@ -1119,7 +1127,7 @@ class CarCropGUI(QWidget):
             return
         try:
             entry = {'timestamp': int(time.time()), 'image': self.last_result.get('image_path'), 'predicted': self.last_result.get('brand'), 'confidence': float(self.last_result.get('confidence') or 0.0), 'correct': False, 'reported': True}
-            hist_path = os.path.join(os.path.dirname(__file__), 'history.jsonl')
+            hist_path = os.path.join(str(cache_dir()), 'history.jsonl')
             with open(hist_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + '\n')
             # mark DB record as incorrect if we have it

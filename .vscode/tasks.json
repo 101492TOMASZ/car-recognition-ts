@@ -1,0 +1,21 @@
+{
+  // VS Code tasks for building the single-file AutoDentifier.exe
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build AutoDentifier (onefile)",
+      "type": "shell",
+      "command": ".\\.venv\\Scripts\\pyinstaller.exe",
+      "args": [
+        "--clean",
+        "--noconfirm",
+        ".\\car_app.spec"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
