@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QDialog,
     QTableWidget, QTableWidgetItem, QHeaderView, QSpacerItem, QPlainTextEdit, QToolButton, QStyle
 )
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QPainterPath, QRegion
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPropertyAnimation, QEvent, QTimer, QSize
 from PIL import Image
 import torch
@@ -180,12 +180,44 @@ class CarCropGUI(QWidget):
         # No hover-hide logic needed now; overlay is passive.
         return super().eventFilter(obj, event)
 
+    def _set_status(self, text: str):
+        """Update bottom status bar text safely."""
+        try:
+            if hasattr(self, 'status_label') and self.status_label:
+                self.status_label.setText(str(text))
+        except Exception:
+            pass
+
+    def _format_result_status(self, brand: str, conf: float = None, processing_time: float = None) -> str:
+        """Format: 🚗 Rozpoznano: Brand (pewność: 99.99%) [• 0.45s]"""
+        parts = []
+        try:
+            if brand:
+                parts.append(f"🚗 Rozpoznano: {brand}")
+            else:
+                parts.append("ℹ️ Brak wyniku")
+            if conf is not None:
+                try:
+                    parts.append(f"(pewność: {float(conf):.2f}%)")
+                except Exception:
+                    pass
+            if processing_time is not None:
+                try:
+                    parts.append(f"• {float(processing_time):.2f}s")
+                except Exception:
+                    pass
+        except Exception:
+            return str(brand or "")
+        return " ".join(parts)
+
     def __init__(self):  # consolidated (removed duplicate earlier definition)
         super().__init__()
         self.setWindowTitle("AutoDentifier")
-        self.setGeometry(100, 100, 960, 720)
+        # Ustaw startową rozdzielczość okna (bez blokady rozmiaru)
+        self.setGeometry(100, 100, 1200, 850)
         
 
+        # Pozostawiamy okno skalowalne; ustaw tylko sensowne minimum
         self.setMinimumSize(900, 640)
 
         # Zablokuj maksymalizację (przycisk + akcja WM)
@@ -230,13 +262,13 @@ class CarCropGUI(QWidget):
         except Exception:
             pass
 
-        # Zablokuj dalsze zmiany rozmiaru – po zbudowaniu GUI ustawiamy stały rozmiar.
-        # Używamy singleShot aby poczekać aż układ się policzy po show().
-        QTimer.singleShot(0, self._lock_initial_size)
+    # Okno jest skalowalne — brak dodatkowej blokady rozmiaru.
 
     def _lock_initial_size(self):
+        """No-op: pozostawiamy okno w pełni zmienno-rozmiarowe."""
         try:
-            self.setFixedSize(self.size())
+            # upewnij się, że nie ma ustawionego fixed size
+            self.setMaximumSize(16777215, 16777215)  # Qt default max
         except Exception:
             pass
     # Usuwamy stałe blokowanie rozmiaru – okno ma być responsywne
@@ -271,6 +303,12 @@ class CarCropGUI(QWidget):
         shell_layout = QHBoxLayout(shell)
         shell_layout.setContentsMargins(18, 18, 18, 18)
         shell_layout.setSpacing(22)
+        # Ensure content area gets all extra space
+        try:
+            shell_layout.setStretch(0, 0)  # nav
+            shell_layout.setStretch(1, 1)  # content
+        except Exception:
+            pass
 
         # Navigation panel
         nav = QFrame()
@@ -278,6 +316,12 @@ class CarCropGUI(QWidget):
         nav_layout = QVBoxLayout(nav)
         nav_layout.setContentsMargins(14, 14, 14, 14)
         nav_layout.setSpacing(10)
+        # Keep a stable sidebar width so content scales predictably
+        try:
+            nav.setFixedWidth(280)
+            self._nav_width = 280
+        except Exception:
+            self._nav_width = None
 
         self.title_label = QLabel("AutoDentifier")
         self.title_label.setStyleSheet("background: transparent;")
@@ -290,23 +334,68 @@ class CarCropGUI(QWidget):
         self.model_info_label.setStyleSheet("background: transparent;")
         nav_layout.addWidget(self.model_info_label)
 
+        # Small helper – section caption
+        def _section(text: str):
+            lab = QLabel(text)
+            lab.setObjectName("SectionLabel")
+            lab.setAlignment(Qt.AlignLeft)
+            nav_layout.addWidget(lab)
+
+        _section("Wejście")
+
         self.load_button = QPushButton("Wybierz obraz(y)")
+        try:
+            self.load_button.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
+            self.load_button.setIconSize(QSize(18, 18))
+        except Exception:
+            pass
+        self.load_button.setCursor(Qt.PointingHandCursor)
+        self.load_button.setObjectName("PrimaryBtn")
+        try:
+            self.load_button.setMinimumHeight(42)
+            self.load_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        except Exception:
+            pass
         self.load_button.clicked.connect(self.load_image)
         nav_layout.addWidget(self.load_button)
 
+        _section("Próby / Dane")
         self.test_button = QPushButton("Przykładowe obrazy")
         self.test_button.setObjectName("SecondaryBtn")
+        try:
+            self.test_button.setIcon(self.style().standardIcon(QStyle.SP_DirIcon))
+            self.test_button.setIconSize(QSize(18, 18))
+            self.test_button.setMinimumHeight(42)
+            self.test_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        except Exception:
+            pass
+        self.test_button.setCursor(Qt.PointingHandCursor)
         self.test_button.clicked.connect(self._open_test_mode)
         nav_layout.addWidget(self.test_button)
 
         self.history_button = QPushButton("Historia")
+        try:
+            self.history_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
+            self.history_button.setIconSize(QSize(18, 18))
+            self.history_button.setMinimumHeight(42)
+            self.history_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        except Exception:
+            pass
+        self.history_button.setCursor(Qt.PointingHandCursor)
         self.history_button.clicked.connect(self._open_history)
         nav_layout.addWidget(self.history_button)
 
-        
-
+        _section("Wizualizacja")
         self.heatmap_button = QPushButton("Pokaż heatmapę")
         self.heatmap_button.setEnabled(False)
+        try:
+            self.heatmap_button.setIcon(self.style().standardIcon(QStyle.SP_DialogHelpButton))
+            self.heatmap_button.setIconSize(QSize(18, 18))
+            self.heatmap_button.setMinimumHeight(42)
+            self.heatmap_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        except Exception:
+            pass
+        self.heatmap_button.setCursor(Qt.PointingHandCursor)
         self.heatmap_button.clicked.connect(self.toggle_heatmap)
         nav_layout.addWidget(self.heatmap_button)
 
@@ -314,14 +403,30 @@ class CarCropGUI(QWidget):
         self.confirm_button.setObjectName("DangerBtn")
         self.confirm_button.setEnabled(False)
         self.confirm_button.setVisible(False)
+        try:
+            self.confirm_button.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxWarning))
+            self.confirm_button.setIconSize(QSize(18, 18))
+            self.confirm_button.setMinimumHeight(40)
+            self.confirm_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        except Exception:
+            pass
+        self.confirm_button.setCursor(Qt.PointingHandCursor)
         self.confirm_button.clicked.connect(self._on_confirm_click)
         nav_layout.addWidget(self.confirm_button)
 
+        # Bottom toolbar with small tools
+        nav_layout.addStretch(1)
+        tools_row = QHBoxLayout()
+        tools_row.setSpacing(8)
+
         # Theme toggle as sun/moon icon-like button
         self.theme_button = QToolButton()
+        self.theme_button.setObjectName("NavTool")
         self.theme_button.setToolTip("Motyw: Dark")
         try:
             self.theme_button.setAutoRaise(True)
+            self.theme_button.setIconSize(QSize(18, 18))
+            self.theme_button.setFixedSize(36, 32)
         except Exception:
             pass
         self.theme_button.clicked.connect(self._toggle_theme)
@@ -331,24 +436,23 @@ class CarCropGUI(QWidget):
         except Exception:
             # fallback text
             self.theme_button.setText('🌙')
-        nav_layout.addWidget(self.theme_button)
-
-        nav_layout.addStretch(1)
+        tools_row.addWidget(self.theme_button)
 
         # Icon-only logs button
         self.logs_button = QToolButton()
+        self.logs_button.setObjectName("NavTool")
         self.logs_button.setToolTip("Logi")
         try:
             self.logs_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
-        except Exception:
-            pass
-        try:
-            self.logs_button.setIconSize(QSize(20, 20))
+            self.logs_button.setIconSize(QSize(18, 18))
             self.logs_button.setAutoRaise(True)
+            self.logs_button.setFixedSize(36, 32)
         except Exception:
             pass
         self.logs_button.clicked.connect(self._open_logs_viewer)
-        nav_layout.addWidget(self.logs_button)
+        tools_row.addStretch(1)
+        tools_row.addWidget(self.logs_button)
+        nav_layout.addLayout(tools_row)
 
         # Content area
         content_layout = QVBoxLayout()
@@ -386,7 +490,11 @@ class CarCropGUI(QWidget):
         self.heatmap_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.heatmap_label.hide()
 
-        content_layout.addWidget(self.image_frame, alignment=Qt.AlignHCenter)
+        # Let image frame take the vertical stretch so it scales with window size
+        try:
+            content_layout.addWidget(self.image_frame, 1)
+        except Exception:
+            content_layout.addWidget(self.image_frame, alignment=Qt.AlignHCenter)
 
         self.result_label = QLabel("Wybierz obraz")
         self.result_label.setObjectName("ResultLabel")
@@ -397,16 +505,50 @@ class CarCropGUI(QWidget):
             self.result_label.setMinimumHeight(90)
             self.result_label.setMaximumHeight(self.RESULT_MAX_HEIGHT)
             self.result_label.setWordWrap(True)
+            self.result_label.setStyleSheet("background: transparent;")
         except Exception:
             pass
-        content_layout.addWidget(self.result_label, alignment=Qt.AlignHCenter)
+        # Hide legacy result label and do not place it in the layout
+        try:
+            self.result_label.setVisible(False)
+        except Exception:
+            pass
 
         shell_layout.addWidget(nav)
         shell_layout.addLayout(content_layout, stretch=1)
 
+        # Outer layout
         outer = QVBoxLayout()
         outer.setContentsMargins(30, 30, 30, 30)
-        outer.addWidget(shell)
+        outer.setSpacing(12)
+        try:
+            outer.addWidget(shell, 1)
+        except Exception:
+            outer.addWidget(shell)
+
+        # Status bar placed directly under the image (inside content_layout)
+        self.status_bar = QFrame()
+        self.status_bar.setStyleSheet("background: transparent;")
+        self.status_bar.setObjectName("StatusBar")
+        status_layout = QHBoxLayout(self.status_bar)
+        status_layout.setContentsMargins(18, 14, 18, 14)
+        status_layout.setSpacing(8)
+        self.status_label = QLabel("Gotowy")
+        self.status_label.setObjectName("StatusText")
+        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        status_layout.addWidget(self.status_label)
+        status_layout.addStretch(1)
+        try:
+            from PyQt5.QtWidgets import QSizePolicy as _QSP
+            self.status_bar.setSizePolicy(_QSP.Expanding, _QSP.Fixed)
+        except Exception:
+            pass
+        # Add status bar into content (under image)
+        try:
+            content_layout.addWidget(self.status_bar, 0)
+        except Exception:
+            content_layout.addWidget(self.status_bar)
+
         self.setLayout(outer)
 
     # ---------------- THEME SYSTEM -----------------
@@ -489,6 +631,16 @@ class CarCropGUI(QWidget):
                 border-right: 1px solid {border_col};
                 border-radius: {radius_m}px;
             }}
+            QLabel#SectionLabel {{
+                background: transparent;
+                color: {text_col};
+                opacity: 0.85;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+                margin-top: 10px;
+                margin-bottom: 4px;
+            }}
             QLabel#TitleLabel {{
                 font-size: 30px; font-weight: 600; letter-spacing: 0.5px; padding: 4px 4px 12px 4px;
             }}
@@ -512,26 +664,49 @@ class CarCropGUI(QWidget):
                 border: 1px solid {border_col};
                 border-radius: {radius_inner}px; padding: 10px 18px; margin-top: 14px;
             }}
+            QFrame#StatusBar {{
+                background: {panel_bg};
+                border: 1px solid {border_col};
+                border-radius: 14px;
+            }}
+            QLabel#StatusText {{
+                color: {text_col};
+                font-size: 17px;
+                font-weight: 600;
+            }}
             QPushButton {{
                 background: {accent};
                 color: {'#f1f5f9' if dark else '#ffffff'};
                 border: 0px solid transparent;
                 border-radius: 14px;
-                padding: 8px 16px;
+                padding: 10px 14px;
                 font-size: 13px; font-weight: 600;
                 margin: 6px 4px;
                 min-width: 140px;
+                min-height: 40px;
             }}
             QPushButton:hover {{ background: {accent_hover}; }}
             QPushButton:pressed {{ background: {accent_down}; }}
             QPushButton:disabled {{ background: {subtle}; color: {'#64748b' if dark else '#94a3b8'}; }}
+            QPushButton#PrimaryBtn {{
+                background: {accent};
+                color: #ffffff;
+                box-shadow: none;
+            }}
             QPushButton#DangerBtn {{ background: #dc2626; }}
             QPushButton#DangerBtn:hover {{ background: #b91c1c; }}
-            QPushButton#SecondaryBtn {{ background: linear-gradient(135deg, rgba(255,255,255,0.16), rgba(255,255,255,0.04));
+            QPushButton#SecondaryBtn {{ background: rgba(255,255,255,{ '0.10' if dark else '0.55' });
+                color: {text_col}; border: 1px solid {border_col}; }}
+            QPushButton#SecondaryBtn:hover {{ background: rgba(255,255,255,{ '0.16' if dark else '0.65' }); }}
+            QPushButton#SecondaryBtn:pressed {{ background: rgba(255,255,255,{ '0.22' if dark else '0.72' }); }}
+            QToolButton#NavTool {{
+                background: rgba(255,255,255,{ '0.06' if dark else '0.75' });
+                border: 1px solid {border_col};
                 color: {text_col};
+                border-radius: 10px;
             }}
-            QPushButton#SecondaryBtn:hover {{ background: linear-gradient(135deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08)); }}
-            QPushButton#SecondaryBtn:pressed {{ background: linear-gradient(135deg, rgba(255,255,255,0.28), rgba(255,255,255,0.12)); }}
+            QToolButton#NavTool:hover {{ background: rgba(255,255,255,{ '0.12' if dark else '0.85' }); }}
+            QToolButton#NavTool:pressed {{ background: rgba(255,255,255,{ '0.18' if dark else '0.92' }); }}
             QTableWidget {{
                 background: {table_bg};
                 gridline-color: {border_col};
@@ -549,6 +724,16 @@ class CarCropGUI(QWidget):
         """
         try:
             self.setStyleSheet(style)
+        except Exception:
+            pass
+        # remember current inner radius for rounded clipping
+        try:
+            self._radius_inner = int(radius_inner)
+        except Exception:
+            self._radius_inner = 18
+        # update rounded clip after theme change
+        try:
+            QTimer.singleShot(0, self._update_rounded_clip)
         except Exception:
             pass
 
@@ -612,6 +797,8 @@ class CarCropGUI(QWidget):
             self._update_image_frame_bounds()
             # Ensure heatmap overlay always fills image_label
             self.heatmap_label.setGeometry(0, 0, self.image_label.width(), self.image_label.height())
+            # keep rounded clip in sync with size
+            self._update_rounded_clip()
             # Nie zmieniamy rozmiaru etykiety – tylko odświeżamy skalowanie jeżeli jest obraz
             if hasattr(self, 'current_image_path') and self.current_image_path:
                 self._refresh_base_image()
@@ -620,6 +807,26 @@ class CarCropGUI(QWidget):
         except Exception:
             pass
         self._reposition_brand_overlay()
+
+    def _update_rounded_clip(self):
+        """Clip image and overlays to a rounded rectangle so the photo sits inside the window."""
+        try:
+            if not hasattr(self, 'image_label'):
+                return
+            r = int(getattr(self, '_radius_inner', 18))
+            rect = self.image_label.rect()
+            if rect.width() <= 2 or rect.height() <= 2:
+                return
+            path = QPainterPath()
+            # slight inset to avoid clipping border outline
+            path.addRoundedRect(rect.adjusted(0, 0, -1, -1), r, r)
+            region = QRegion(path.toFillPolygon().toPolygon())
+            self.image_label.setMask(region)
+            # children (heatmap/brand) are clipped by parent mask, but set for safety
+            if hasattr(self, 'heatmap_label'):
+                self.heatmap_label.setMask(region)
+        except Exception:
+            pass
 
     def event(self, e):
         """Handle move/activate to correct any transient painting drift after alt-tab or dragging."""
@@ -695,7 +902,10 @@ class CarCropGUI(QWidget):
             total_w = max(1, self.width())
             total_h = max(1, self.height())
             # Dostępna szerokość po odjęciu panelu nawigacji i marginesów shell
-            nav_w = getattr(self, 'title_label', None).parent().width() if getattr(self, 'title_label', None) else int(total_w * 0.25)
+            if getattr(self, '_nav_width', None):
+                nav_w = int(self._nav_width)
+            else:
+                nav_w = getattr(self, 'title_label', None).parent().width() if getattr(self, 'title_label', None) else int(total_w * 0.25)
             shell_margins = 18 * 2 + 30 * 2  # shell + outer
             avail_w = max(200, total_w - nav_w - shell_margins)
             max_w_cap = int(total_w * self.IMAGE_WIDTH_RATIO)
@@ -792,14 +1002,15 @@ class CarCropGUI(QWidget):
             # ensure stacked layout on image
             # no stacked layout now
             self.heatmap_button.setEnabled(False)
-            self.result_label.setText(f'Batch: przetwarzanie {len(paths)} obrazów...')
+            self.result_label.setText('')
+            self._set_status(f'Batch: przetwarzanie {len(paths)} obrazów...')
         except Exception:
             pass
 
         # Ensure YOLO model is loaded before batch predictions
         try:
             if self.yolo is None:
-                self.result_label.setText('Ładowanie modelu YOLO...')
+                self._set_status('Ładowanie modelu YOLO...')
                 QApplication.processEvents()
                 self.load_models()
         except Exception:
@@ -837,14 +1048,14 @@ class CarCropGUI(QWidget):
             self.heatmap_button.setText("Pokaż heatmapę")
         except Exception:
             pass
+        self.result_label.setText('')
+        self._set_status('Analiza obrazu...')
 
-        self.result_label.setText('Predicting...')
-
-    # start prediction thread
-    # Ensure YOLO model is loaded before single prediction
+        # start prediction thread
+        # Ensure YOLO model is loaded before single prediction
         try:
             if self.yolo is None:
-                self.result_label.setText('Ładowanie modelu YOLO...')
+                self._set_status('Ładowanie modelu YOLO...')
                 QApplication.processEvents()
                 self.load_models()
         except Exception:
@@ -974,16 +1185,20 @@ class CarCropGUI(QWidget):
 
         # reset small UI bits
         try:
-            self.result_label.setText('Batch zakończony')
+            self._set_status('Batch zakończony')
         except Exception:
             pass
 
     def _on_batch_error(self, err):
         QMessageBox.warning(self, 'Batch', f'Błąd batch: {err}')
+        try:
+            self._set_status(f'Batch błąd: {err}')
+        except Exception:
+            pass
 
     def _on_batch_progress(self, current: int, total: int):
         try:
-            self.result_label.setText(f'Batch: {current}/{total}')
+            self._set_status(f'Batch: {current}/{total}')
         except Exception:
             pass
 
@@ -1045,11 +1260,23 @@ class CarCropGUI(QWidget):
             pass
         if brand is None:
             self.result_label.setText(res.get('message', 'Brak wyników'))
+            try:
+                self._set_status(res.get('message', 'Brak wyników'))
+            except Exception:
+                pass
         else:
             try:
-                self.result_label.setText(f"Marka:{brand}, Pewność:{float(conf or 0.0):.2f}%")
+                msg = self._format_result_status(brand, float(conf or 0.0), float(proc_time or 0.0))
             except Exception:
-                self.result_label.setText(f"Marka:{brand}")
+                msg = f"🚗 Rozpoznano: {brand}"
+            try:
+                self._set_status(msg)
+            except Exception:
+                pass
+            try:
+                self.result_label.setText("")
+            except Exception:
+                pass
 
     def toggle_heatmap(self):
         # Use QStackedLayout to swap exactly - prevents layout shift.
@@ -1093,6 +1320,10 @@ class CarCropGUI(QWidget):
 
     def _on_pred_error(self, err):
         self.result_label.setText(f"Prediction error: {err}")
+        try:
+            self._set_status(f"Błąd: {err}")
+        except Exception:
+            pass
         try:
             self.confirm_button.setVisible(False)
             self.confirm_button.setEnabled(False)
