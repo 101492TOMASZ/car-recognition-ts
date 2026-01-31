@@ -1,352 +1,270 @@
-from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-    QListWidget, QListWidgetItem, QWidget, QSizePolicy,
-    QPushButton, QMessageBox, QFileDialog
-)
-from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import Qt
-import pandas as pd
-import io
-from PIL import Image
 import os
-from datetime import datetime
-import sqlite3
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from reportlab.lib import colors
-from reportlab.platypus import Table, TableStyle, Image as RLImage, SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import mm
-from typing import Any
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-import reportlab.rl_config
+import time
+from PyQt5.QtWidgets import (
+    QDialog, QVBoxLayout, QListWidget, QListWidgetItem, QLabel, QPushButton,
+    QHBoxLayout, QFileDialog, QMessageBox, QSizePolicy, QSpacerItem
+)
+from PyQt5.QtGui import QPixmap, QColor
+from PyQt5.QtCore import Qt
+from database import get_all_records, get_record, export_records_table_pdf, delete_records
+
 
 class HistoryViewer(QDialog):
-    def __init__(self, predictions, database):
-        """
-        Each prediction expected in the following tuple structure:
-        (id, timestamp, image_path, brand, confidence, is_bad_prediction)
-        """
-        super().__init__()
-        self.setWindowTitle("Historia predykcji")
-        self.setMinimumSize(900, 600)
-        self.predictions = predictions
-        self.db = database
-        self.init_ui()
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #1e1e1e;
-                color: #ffffff;
-            }
-            QListWidget {
-                background-color: #252526;
-                border: none;
-                border-radius: 8px;
-                padding: 10px;
-            }
-            QListWidget::item {
-                background-color: #2d2d2d;
-                border-radius: 4px;
-                margin: 5px;
-                padding: 10px;
-            }
-            QListWidget::item:hover {
-                background-color: #3e3e3e;
-            }
-            QComboBox {
-                background-color: #3b3b3b;
-                border: none;
-                border-radius: 4px;
-                padding: 8px;
-                color: white;
-            }
-            QComboBox:hover {
-                background-color: #4e4e4e;
-            }
-            QLabel {
-                color: #ffffff;
-            }
-        """)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Historia predykcji')
+        self.resize(960, 620)
+        # zachowaj referencję do motywu (domyślnie dark jeśli brak w rodzicu)
+        self.theme = getattr(parent, 'theme', 'dark')
 
-    def init_ui(self):
-        layout = QVBoxLayout(self)
+        main_layout = QHBoxLayout(self)
 
-        # Sorting options
-        sort_layout = QHBoxLayout()
-        sort_label = QLabel("Sortuj według:")
-        self.sort_combobox = QComboBox()
-        self.sort_combobox.addItems([
-            "Data (najnowsze)", 
-            "Data (najstarsze)", 
-            "Marka", 
-            "Pewność",
-            "Jakość predykcji"
-        ])
-        self.sort_combobox.currentIndexChanged.connect(self.populate_list)
-        
-        # Export button
-        self.export_btn = QPushButton("Eksportuj zaznaczone")
-        self.export_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2e7d32;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                color: white;
-            }
-            QPushButton:hover {
-                background-color: #388e3c;
-            }
-        """)
-        self.export_btn.clicked.connect(self.export_selected)
-        
-        sort_layout.addWidget(sort_label)
-        sort_layout.addWidget(self.sort_combobox)
-        sort_layout.addStretch()
-        sort_layout.addWidget(self.export_btn)
-        layout.addLayout(sort_layout)
+        # left: list (multi-select)
+        self.listw = QListWidget()
+        self.listw.setSelectionMode(QListWidget.ExtendedSelection)
+        self.listw.itemSelectionChanged.connect(self._on_select)
+        self.listw.itemClicked.connect(self._on_item_clicked)
+        self.listw.setMinimumWidth(380)
+        main_layout.addWidget(self.listw)
 
-        # List widget for predictions
-        self.list_widget = QListWidget()
-        self.list_widget.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
-        self.list_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout.addWidget(self.list_widget)
+        # right: preview + stats + buttons
+        right = QVBoxLayout()
 
-        # Increase item height
-        self.list_widget.setStyleSheet("""
-            QListWidget::item {
-                min-height: 150px;
-                background-color: #2d2d2d;
-                border-radius: 4px;
-                margin: 5px;
-                padding: 10px;
-            }
-            QListWidget::item:selected {
-                background-color: #0078d4;
-            }
-            QListWidget::item:hover {
-                background-color: #3e3e3e;
-            }
-        """)
+        self.preview = QLabel('Wybierz rekord')
+        self.preview.setObjectName('Preview')
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.preview.setFixedSize(480, 360)
+        right.addWidget(self.preview, alignment=Qt.AlignTop)
 
-        self.populate_list()
+        self.stats = QLabel('')
+        self.stats.setObjectName('Stats')
+        self.stats.setWordWrap(True)
+        right.addWidget(self.stats)
 
-    def format_confidence(self, conf):
-        """Format confidence value as percentage with 2 decimal places"""
-        try:
-            return f"{float(conf):.2f}%" if conf is not None else "N/A"
-        except (ValueError, TypeError):
-            return "N/A"
+        # buttons row
+        btns = QHBoxLayout()
+        self.btn_export = QPushButton('Eksportuj zaznaczone')
+        self.btn_export.clicked.connect(self._export_selected_pdf)
+        self.btn_export.setEnabled(False)
+        self.btn_delete = QPushButton('Usuń zaznaczone')
+        self.btn_delete.setObjectName('DangerBtn')
+        self.btn_delete.clicked.connect(self._delete_selected)
+        self.btn_delete.setEnabled(False)
+        self.btn_refresh = QPushButton('Odśwież')
+        self.btn_refresh.clicked.connect(self._load)
+        for b in (self.btn_export, self.btn_delete, self.btn_refresh):
+            btns.addWidget(b)
+        btns.addItem(QSpacerItem(6, 6))
 
-    def get_img_path(self, pred_id):
-        # Always use the same pattern as database.py
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        img_dir = os.path.join(script_dir, "temp", "img")
-        img_path = os.path.join(img_dir, f"prediction_{pred_id}.jpg")
-        if not os.path.exists(img_path):
-            # Ensure directory exists
-            os.makedirs(img_dir, exist_ok=True)
-            # Try to regenerate from database
-            try:
-                db_path = os.path.join(script_dir, "temp", "predictions.db")
-                with sqlite3.connect(db_path) as conn:
-                    cursor = conn.cursor()
-                    row = cursor.execute("SELECT image_data FROM predictions WHERE id=?", (pred_id,)).fetchone()
-                    if row and row[0]:
-                        with open(img_path, 'wb') as f:
-                            f.write(row[0])
-            except Exception as e:
-                print(f"Could not regenerate image for prediction {pred_id}: {e}")
-        return img_path
+        right.addLayout(btns)
+        main_layout.addLayout(right)
 
-    def populate_list(self):
-        self.list_widget.clear()
+        self._load()
+        # zastosuj motyw po zbudowaniu UI
+        self.apply_theme(self.theme)
 
-        # Decide sort order
-        sort_by = self.sort_combobox.currentText()
-        def get_tuple_value(p, idx, default=None):
-            return p[idx] if isinstance(p, (tuple, list)) and len(p) > idx else default
-            
-        if sort_by == "Data (najnowsze)":
-            sorted_preds = sorted(self.predictions, key=lambda p: get_tuple_value(p, 1, ''), reverse=True)
-        elif sort_by == "Data (najstarsze)":
-            sorted_preds = sorted(self.predictions, key=lambda p: get_tuple_value(p, 1, ''))
-        elif sort_by == "Marka":
-            sorted_preds = sorted(self.predictions, key=lambda p: get_tuple_value(p, 3, '').lower())
-        elif sort_by == "Pewność":
-            sorted_preds = sorted(self.predictions, key=lambda p: get_tuple_value(p, 4, 0), reverse=True)
-        elif sort_by == "Jakość predykcji":
-            sorted_preds = sorted(self.predictions, key=lambda p: (get_tuple_value(p, 5, False), get_tuple_value(p, 4, 0)), reverse=True)
+    # ---------------- THEME (spójny z GUI.py) -----------------
+    def apply_theme(self, mode: str):
+        dark = (mode == 'dark')
+        if dark:
+            bg_gradient = "qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #0e1115, stop:1 #1b2733)"
+            shell_bg = "rgba(255,255,255,0.06)"
+            panel_bg = "rgba(255,255,255,0.05)"
+            border_col = "rgba(255,255,255,0.10)"
+            text_col = "#edf2f7"
+            accent = "#0ea5e9"
+            accent_hover = "#0d8fd0"
+            accent_down = "#0b78b2"
+            subtle = "#334155"
+            list_sel = "rgba(14,165,233,0.22)"
         else:
-            sorted_preds = self.predictions
+            bg_gradient = "qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #f3f5f7, stop:1 #e3e8ec)"
+            shell_bg = "rgba(255,255,255,0.72)"
+            panel_bg = "rgba(255,255,255,0.55)"
+            border_col = "rgba(0,0,0,0.10)"
+            text_col = "#1b2834"
+            accent = "#0077ff"
+            accent_hover = "#0065d6"
+            accent_down = "#0052ad"
+            subtle = "#c6d2dc"
+            list_sel = "rgba(0,119,255,0.18)"
 
-        for pred in sorted_preds:
+        style = f"""
+            QDialog {{
+                background: {bg_gradient};
+                color: {text_col};
+                font-family: 'Segoe UI','Arial';
+                font-size: 14px;
+            }}
+            QListWidget {{
+                background: {panel_bg};
+                border: 1px solid {border_col};
+                border-radius: 18px; padding: 8px; outline: 0; selection-background-color: {list_sel};
+            }}
+            QListWidget::item {{ padding: 8px 10px; margin: 2px 0; border-radius: 10px; }}
+            QListWidget::item:selected {{ background: {list_sel}; color: {text_col}; }}
+            QLabel#Preview, QLabel#Stats {{
+                background: {panel_bg};
+                border: 1px solid {border_col};
+                border-radius: 18px; padding: 10px;
+            }}
+            QPushButton {{
+                background: {accent};
+                color: {'#f1f5f9' if dark else '#ffffff'};
+                border: 0px solid transparent; border-radius: 14px;
+                padding: 8px 16px; font-size: 13px; font-weight: 600; margin: 4px 6px;
+            }}
+            QPushButton:hover {{ background: {accent_hover}; }}
+            QPushButton:pressed {{ background: {accent_down}; }}
+            QPushButton:disabled {{ background: {subtle}; color: {'#64748b' if dark else '#94a3b8'}; }}
+            QPushButton#DangerBtn {{
+                background: {'#ef4444' if dark else '#dc2626'};
+                color: #ffffff;
+            }}
+            QPushButton#DangerBtn:hover {{ background: {'#dc2626' if dark else '#b91c1c'}; }}
+            QPushButton#DangerBtn:pressed {{ background: {'#b91c1c' if dark else '#991b1b'}; }}
+        """
+        try:
+            self.setStyleSheet(style)
+            self.theme = mode
+        except Exception:
+            pass
+
+    def _load(self):
+        self.listw.clear()
+        recs = get_all_records()
+        for r in recs:
             try:
-                id_, timestamp, img_path, brand, conf, is_bad = pred
-            except ValueError as e:
-                print(f"Error unpacking prediction: {e}")
-                continue
-
-            # Always use the correct image path
-            img_path = self.get_img_path(id_)
-
-            item_widget = QWidget()
-            item_layout = QHBoxLayout(item_widget)
-            item_layout.setContentsMargins(5, 5, 5, 5)
-            item_layout.setSpacing(10)
-
-            # Image container with fixed size
-            image_container = QWidget()
-            image_container.setFixedSize(120, 120)
-            image_container.setStyleSheet("background-color: #1e1e1e; border-radius: 4px;")
-            image_container_layout = QVBoxLayout(image_container)
-            image_container_layout.setContentsMargins(0, 0, 0, 0)
-
-            # Image preview
-            image_label = QLabel()
-            image_label.setFixedSize(100, 100)
-            image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            pixmap = QPixmap(img_path)
-            if not pixmap.isNull():
-                scaled_pixmap = pixmap.scaled(
-                    100, 100,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                image_label.setPixmap(scaled_pixmap)
-            else:
-                image_label.setText("Brak obrazu")
-            image_container_layout.addWidget(image_label, alignment=Qt.AlignmentFlag.AlignCenter)
-
-            # Info container with fixed width
-            info_container = QWidget()
-            info_container.setFixedWidth(500)
-            info_container.setStyleSheet("background-color: #252526; border-radius: 4px; padding: 10px;")
-            info_layout = QVBoxLayout(info_container)
-            info_layout.setSpacing(5)            # Format date
-            date_str = str(timestamp)
+                t = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(int(r.get('timestamp') or 0)))
+            except Exception:
+                t = ''
             try:
-                if isinstance(timestamp, str):
-                    date_str = datetime.fromisoformat(timestamp).strftime('%Y-%m-%d %H:%M')
-                elif isinstance(timestamp, datetime):
-                    date_str = timestamp.strftime('%Y-%m-%d %H:%M')
+                conf = float(r.get('confidence') or 0.0)
+            except Exception:
+                conf = 0.0
+            label = f"#{r['id']} • {r.get('predicted')} ({conf:.2f}%) • {t}"
+            it = QListWidgetItem(label)
+            it.setData(Qt.UserRole, r['id'])
+            it.setFlags(it.flags() | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+            try:
+                if not bool(r.get('correct')):
+                    it.setBackground(QColor(255, 220, 220))
             except Exception:
                 pass
+            self.listw.addItem(it)
+        self.preview.setText('Wybierz rekord')
+        self.preview.setPixmap(QPixmap())
+        self.stats.setText('')
+        self.btn_export.setEnabled(False)
+        self.btn_delete.setEnabled(False)
 
-            # Format confidence
-            try:
-                if isinstance(conf, (int, float)):
-                    conf_str = f"{conf:.1f}%"
-
-                else:
-                    conf_str = "N/A"
-            except (ValueError, TypeError):
-                conf_str = "N/A"
-
-            # Status with icon
-            status_str = "❌ Zła predykcja" if is_bad else "✓ Dobra predykcja"
-            status_color = "#c62828" if is_bad else "#2e7d32"            # Create labels for each piece of information
-            date_label = QLabel(f"Data: {date_str}")
-            brand_label = QLabel(f"Marka: {str(brand)}")
-            conf_label = QLabel(f"Pewność: {conf_str}")
-            status_label = QLabel(status_str)
-            
-            # Style labels
-            for label in [date_label, brand_label, conf_label]:
-                label.setStyleSheet("color: #e0e0e0; font-size: 14px;")
-            status_label.setStyleSheet(f"color: {status_color}; font-size: 14px; font-weight: bold;")
-
-            # Add labels to info layout
-            info_layout.addWidget(date_label)
-            info_layout.addWidget(brand_label)
-            info_layout.addWidget(conf_label)
-            info_layout.addWidget(status_label)
-
-            # Add containers to main item layout
-            item_layout.addWidget(image_container)
-            item_layout.addWidget(info_container)
-            item_layout.addStretch()
-
-            list_item = QListWidgetItem(self.list_widget)
-            list_item.setSizeHint(item_widget.sizeHint())
-            self.list_widget.addItem(list_item)
-            self.list_widget.setItemWidget(list_item, item_widget)
-
-    def export_selected(self):
-        """Export the currently selected predictions to a PDF file as a table."""
-        selected_items = self.list_widget.selectedItems()
-        if not selected_items:
-            QMessageBox.warning(self, "Brak zaznaczenia", "Proszę zaznaczyć przynajmniej jeden element do eksportu.")
+    def _on_select(self):
+        items = self.listw.selectedItems()
+        if not items:
+            self.preview.setText('Wybierz rekord')
+            self.preview.setPixmap(QPixmap())
+            self.stats.setText('')
+            self.btn_export.setEnabled(False)
+            self.btn_delete.setEnabled(False)
             return
-
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Zapisz jako", "", 
-            "Pliki PDF (*.pdf);;Wszystkie pliki (*)",
-            options=QFileDialog.Options()
-        )
-        
-        if not file_path:
+        rid = items[0].data(Qt.UserRole)
+        rec = get_record(rid)
+        if not rec:
+            self.preview.setText('Brak danych')
+            self.preview.setPixmap(QPixmap())
+            self.stats.setText('')
+            self.btn_export.setEnabled(False)
+            self.btn_delete.setEnabled(False)
             return
-
-        if not file_path.lower().endswith('.pdf'):
-            file_path += '.pdf'
-
+        img = rec.get('saved_image') or rec.get('image_path')
+        if img and os.path.isfile(img):
+            pix = QPixmap(img)
+            self.preview.setPixmap(pix.scaled(self.preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.preview.setText('Brak obrazu')
         try:
-            # Register Arial font for Unicode/Polish support (Windows)
-            import platform
-            if platform.system() == "Windows":
-                arial_path = os.path.join(os.environ['WINDIR'], 'Fonts', 'arial.ttf')
+            conf = float(rec.get('confidence') or 0.0)
+        except Exception:
+            conf = 0.0
+        try:
+            pt = float(rec.get('processing_time') or 0.0)
+        except Exception:
+            pt = 0.0
+        self.stats.setText(
+            f"ID: {rec.get('id')}\n"
+            f"Predicted: {rec.get('predicted')}\n"
+            f"Confidence: {conf:.2f}%\n"
+            f"Correct: {bool(rec.get('correct'))}\n"
+            f"Processing time: {pt:.3f}s\n"
+            f"Timestamp: {rec.get('timestamp')}"
+        )
+        has_sel = len(items) > 0
+        self.btn_export.setEnabled(has_sel)
+        self.btn_delete.setEnabled(has_sel)
+
+    def _on_item_clicked(self, item):
+        try:
+            rid = item.data(Qt.UserRole)
+            rec = get_record(rid)
+            if not rec:
+                return
+            img = rec.get('saved_image') or rec.get('image_path')
+            if img and os.path.isfile(img):
+                pix = QPixmap(img)
+                self.preview.setPixmap(pix.scaled(self.preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
             else:
-                arial_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"  # fallback for Linux
-            pdfmetrics.registerFont(TTFont("Arial", arial_path))
-            reportlab.rl_config.TTFSearchPath.append(os.path.dirname(arial_path))
-            # Prepare data for the table
-            data: list[list[Any]] = [["ID", "Data i czas", "Marka", "Pewność (%)", "Jakość", "Obraz"]]
-            row_heights = [30]
-            image_width = 40 * mm
-            image_height = 30 * mm
-            styles = getSampleStyleSheet()
-            styles["Normal"].fontName = "Arial"
-            styles["Title"].fontName = "Arial"
-            for item in selected_items:
-                index = self.list_widget.row(item)
-                if index < 0 or index >= len(self.predictions):
-                    continue
-                pred = self.predictions[index]
-                id_, timestamp, img_path, brand, conf, is_bad = pred
-                img_path = self.get_img_path(id_)
-                try:
-                    date = datetime.fromisoformat(timestamp).strftime('%Y-%m-%d %H:%M')
-                except:
-                    date = str(timestamp)
-                try:
-                    conf_str = f"{float(conf):.1f}%" if conf is not None else "N/A"
-                except (ValueError, TypeError):
-                    conf_str = "N/A"
-                status_str = "❌ Zła predykcja" if is_bad else "✓ Dobra predykcja"
-                if os.path.exists(img_path):
-                    rl_img = RLImage(img_path, width=image_width, height=image_height)
-                else:
-                    rl_img = Paragraph("Brak obrazu", styles["Normal"])
-                data.append([str(id_), date, str(brand), conf_str, status_str, rl_img])
-                row_heights.append(int(image_height))
-            doc = SimpleDocTemplate(file_path, pagesize=A4)
-            table = Table(data, colWidths=[20*mm, 35*mm, 35*mm, 25*mm, 35*mm, image_width], rowHeights=row_heights)
-            table.setStyle(TableStyle([
-                ('FONTNAME', (0, 0), (-1, -1), 'Arial'),
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0078d4')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('FONTSIZE', (0, 1), (-1, -1), 10),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ]))
-            elements = [Paragraph("Historia predykcji", styles["Title"]), Spacer(1, 12), table]
-            doc.build(elements)
-            QMessageBox.information(self, "Sukces", "Dane zostały wyeksportowane do PDF pomyślnie.")
+                self.preview.setText('Brak obrazu')
+            try:
+                conf = float(rec.get('confidence') or 0.0)
+            except Exception:
+                conf = 0.0
+            try:
+                pt = float(rec.get('processing_time') or 0.0)
+            except Exception:
+                pt = 0.0
+            self.stats.setText(
+                f"ID: {rec.get('id')}\n"
+                f"Predicted: {rec.get('predicted')}\n"
+                f"Confidence: {conf:.2f}%\n"
+                f"Correct: {bool(rec.get('correct'))}\n"
+                f"Processing time: {pt:.3f}s\n"
+                f"Timestamp: {rec.get('timestamp')}"
+            )
+            self.btn_export.setEnabled(True)
+            self.btn_delete.setEnabled(True)
+        except Exception:
+            pass
+
+    def _delete_selected(self):
+        items = self.listw.selectedItems()
+        if not items:
+            QMessageBox.information(self, 'Usuń', 'Zaznacz co najmniej jeden rekord (Ctrl/Cmd + klik).')
+            return
+        ids = [it.data(Qt.UserRole) for it in items]
+        msg = f"Czy na pewno usunąć {len(ids)} rekord(ów)? Operacja jest nieodwracalna."
+        reply = QMessageBox.question(self, 'Potwierdź usunięcie', msg, QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            deleted = delete_records(ids)
+            self._load()
+            QMessageBox.information(self, 'Usunięto', f'Usunięto: {deleted} rekord(ów).')
         except Exception as e:
-            QMessageBox.critical(self, "Błąd eksportu", f"Nie udało się wyeksportować danych: {e}")
-            print(f"Export error: {e}")
+            QMessageBox.critical(self, 'Błąd usuwania', str(e))
+
+    def _export_selected_pdf(self):
+        items = self.listw.selectedItems()
+        if not items:
+            QMessageBox.information(self, 'Eksport', 'Zaznacz co najmniej jeden rekord (Ctrl/Cmd + klik).')
+            return
+        ids = [it.data(Qt.UserRole) for it in items]
+        default_name = 'selected.pdf' if len(ids) > 1 else f'record_{ids[0]}.pdf'
+        out, _ = QFileDialog.getSaveFileName(self, 'Zapisz PDF', default_name, 'PDF files (*.pdf)')
+        if not out:
+            return
+        try:
+            export_records_table_pdf(ids, out)
+            QMessageBox.information(self, 'Eksport', f'Zapisano: {out}')
+        except Exception as e:
+            QMessageBox.critical(self, 'Błąd eksportu', str(e))

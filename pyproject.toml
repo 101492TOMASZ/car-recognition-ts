@@ -1,0 +1,37 @@
+[project]
+name = "car-recognition-ts"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Desktop PyQt5 app for car brand recognition (YOLOv8 + MobileNetV2 + Grad-CAM)."
+authors = [{name="Author", email="you@example.com"}]
+readme = "README.md"
+license = {text = "MIT"}
+dependencies = [
+  "PyQt5",
+  "ultralytics",
+  "torch",
+  "torchvision",
+  "Pillow",
+  "numpy",
+  "opencv-python",
+  "reportlab",
+  "scikit-learn",
+  "seaborn",
+  "matplotlib"
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "mypy", "ruff"]
+
+[tool.ruff]
+line-length = 120
+select = ["E", "F"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+strict = false
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py", "*_test.py"]
+addopts = "-q"

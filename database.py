@@ -1,139 +1,367 @@
 import sqlite3
-from datetime import datetime
 import os
-from PIL import Image
-import io
-from car_detector import CarDetector
+import time
+from pathlib import Path
+from utils_paths import db_path as _db_path, image_dir as _image_dir
 
-class Database:
-    def __init__(self, db_file="predictions.db"):
-        # Set database file path to be in the temp directory relative to the current script
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        self.temp_dir = os.path.join(script_dir, "temp")
-        self.img_dir = os.path.join(self.temp_dir, "img")
-        self.ensure_temp_dirs()  # Create temp directories if they don't exist
-        self.db_file = os.path.join(self.temp_dir, db_file)
-        self.car_detector = CarDetector()
-        self.init_database()
+DB_NAME = str(_db_path())
+# directory for saved images lives in cache
+IMAGE_DIR = str(_image_dir())
 
-    def ensure_temp_dirs(self):
-        """Create temporary directories if they don't exist"""
-        os.makedirs(self.temp_dir, exist_ok=True)
-        os.makedirs(self.img_dir, exist_ok=True)
+def init_db(db_path=None):
+    dbp = str(db_path or DB_NAME)
+    conn = sqlite3.connect(dbp)
+    cur = conn.cursor()
+    cur.execute('''
+    CREATE TABLE IF NOT EXISTS records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        image_path TEXT,
+        saved_image TEXT,
+        predicted TEXT,
+        confidence REAL,
+        correct INTEGER,
+        processing_time REAL,
+        timestamp INTEGER
+    )
+    ''')
+    conn.commit()
+    conn.close()
+    # ensure hidden image dir exists
+    try:
+        os.makedirs(IMAGE_DIR, exist_ok=True)
+    except Exception:
+        pass
+    return dbp
 
-    def save_temp_image(self, image_data, prediction_id):
-        """Save image data to a temporary file for display/export"""
-        temp_path = os.path.join(self.img_dir, f"prediction_{prediction_id}.jpg")
+
+def save_image_copy(src_path, prefix=None):
+    """Copy an image file into the hidden IMAGE_DIR and return the new path.
+
+    This keeps saved images out of the user's visible project folder listing.
+    """
+    try:
+        os.makedirs(IMAGE_DIR, exist_ok=True)
+    except Exception:
+        pass
+    base = os.path.basename(src_path)
+    ts = int(time.time())
+    if prefix:
+        name = f"{ts}_{prefix}_{base}"
+    else:
+        name = f"{ts}_{base}"
+    dst = os.path.join(IMAGE_DIR, name)
+    try:
+        import shutil
+        shutil.copy(src_path, dst)
+        return dst
+    except Exception:
+        return dst
+
+def insert_record(image_path, saved_image, predicted, confidence, correct, processing_time, timestamp, db_path=None):
+    dbp = str(db_path or DB_NAME)
+    conn = sqlite3.connect(dbp)
+    cur = conn.cursor()
+    cur.execute('''INSERT INTO records (image_path, saved_image, predicted, confidence, correct, processing_time, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)''', (image_path, saved_image, predicted, confidence, int(bool(correct)), processing_time, int(timestamp)))
+    conn.commit()
+    rid = cur.lastrowid
+    conn.close()
+    return rid
+
+def get_all_records(db_path=None):
+    dbp = str(db_path or DB_NAME)
+    conn = sqlite3.connect(dbp)
+    cur = conn.cursor()
+    cur.execute('SELECT id, image_path, saved_image, predicted, confidence, correct, processing_time, timestamp FROM records ORDER BY timestamp DESC')
+    rows = cur.fetchall()
+    conn.close()
+    keys = ['id','image_path','saved_image','predicted','confidence','correct','processing_time','timestamp']
+    return [dict(zip(keys, r)) for r in rows]
+
+def get_record(rid, db_path=None):
+    dbp = str(db_path or DB_NAME)
+    conn = sqlite3.connect(dbp)
+    cur = conn.cursor()
+    cur.execute('SELECT id, image_path, saved_image, predicted, confidence, correct, processing_time, timestamp FROM records WHERE id=?', (rid,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    keys = ['id','image_path','saved_image','predicted','confidence','correct','processing_time','timestamp']
+    return dict(zip(keys, row))
+
+def export_record_pdf(rid, out_pdf_path, db_path=None):
+    # uses reportlab to generate a simple PDF with the image and metadata
+    try:
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.utils import ImageReader
+    except Exception as e:
+        raise RuntimeError('reportlab is required to export PDF')
+    rec = get_record(rid, db_path=db_path)
+    if rec is None:
+        raise ValueError('Record not found')
+    c = canvas.Canvas(out_pdf_path, pagesize=A4)
+    w, h = A4
+    margin = 40
+    text_x = margin
+    text_y = h - margin
+    c.setFont('Helvetica', 12)
+    c.drawString(text_x, text_y, f"Record ID: {rec['id']}")
+    text_y -= 18
+    c.drawString(text_x, text_y, f"Predicted: {rec['predicted']}")
+    text_y -= 18
+    try:
+        cval = float(rec.get('confidence') or 0.0)
+    except Exception:
+        cval = 0.0
+    c.drawString(text_x, text_y, f"Confidence: {cval:.2f}")
+    text_y -= 18
+    c.drawString(text_x, text_y, f"Correct: {bool(rec['correct'])}")
+    text_y -= 18
+    try:
+        pt = float(rec.get('processing_time') or 0.0)
+    except Exception:
+        pt = 0.0
+    c.drawString(text_x, text_y, f"Processing time (s): {pt:.3f}")
+    text_y -= 18
+    import datetime
+    dt = datetime.datetime.fromtimestamp(rec['timestamp']).isoformat()
+    c.drawString(text_x, text_y, f"Timestamp: {dt}")
+    # draw image below
+    try:
+        img_path = rec.get('saved_image') or rec.get('image_path')
+        if img_path and os.path.isfile(img_path):
+            img_reader = ImageReader(img_path)
+            # fit image into page width - 2*margin and remaining height
+            max_w = w - 2*margin
+            max_h = text_y - margin
+            c.drawImage(img_reader, margin, margin, width=max_w, height=max_h, preserveAspectRatio=True, anchor='sw')
+    except Exception:
+        pass
+    # do not add an extra blank page
+    c.save()
+    return out_pdf_path
+
+def export_records_pdf(rids, out_pdf_path, db_path=None):
+    """Export multiple records into a single PDF. Layout adapts to page size (A4) and places items in a 2-column grid."""
+    try:
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.utils import ImageReader
+        from reportlab.lib.units import mm
+    except Exception:
+        raise RuntimeError('reportlab is required to export PDF')
+    recs = []
+    for rid in rids:
+        r = get_record(rid, db_path=db_path)
+        if r:
+            recs.append(r)
+    if not recs:
+        raise ValueError('No valid records to export')
+
+    c = canvas.Canvas(out_pdf_path, pagesize=A4)
+    w, h = A4
+    margin = 20 * mm
+    usable_w = w - 2 * margin
+    usable_h = h - 2 * margin
+    cols = 2
+    col_w = usable_w / cols
+    # reserve space for caption under each image
+    caption_h = 28 * mm
+    # compute rows per page
+    box_h = 80 * mm  # image + caption approx
+    rows = max(1, int(usable_h // box_h))
+    items_per_page = cols * rows
+
+    def draw_record_at(rec, page_idx, pos_idx):
+        col = pos_idx % cols
+        row = pos_idx // cols
+        x = margin + col * col_w
+        y_top = h - margin - row * box_h
+        # space for image
+        img_max_w = col_w - 10 * mm
+        img_max_h = box_h - caption_h - 6 * mm
+        img_path = rec.get('saved_image') or rec.get('image_path')
+        if img_path and os.path.isfile(img_path):
+            try:
+                ir = ImageReader(img_path)
+                # fit while preserving aspect
+                iw, ih = ir.getSize()
+                scale = min(img_max_w / iw, img_max_h / ih)
+                draw_w = iw * scale
+                draw_h = ih * scale
+                img_x = x + (col_w - draw_w) / 2
+                img_y = y_top - draw_h - caption_h
+                c.drawImage(ir, img_x, img_y, width=draw_w, height=draw_h, preserveAspectRatio=True)
+            except Exception:
+                pass
+        # draw caption
+        txt_x = x + 6 * mm
+        txt_y = y_top - box_h + caption_h - 6 * mm
+        c.setFont('Helvetica', 10)
         try:
-            if isinstance(image_data, str) and os.path.exists(image_data):
-                # If image_data is a path, copy the file
-                import shutil
-                shutil.copy2(image_data, temp_path)
-            elif image_data is not None:
-                # If we have bytes, write them directly
-                if isinstance(image_data, bytes):
-                    with open(temp_path, 'wb') as f:
-                        f.write(image_data)
-                else:
-                    print(f"Invalid image data type: {type(image_data)}")
-                    return None
-            return temp_path
-        except Exception as e:
-            print(f"Error saving temp image: {e}")
-            return None
+            cval = float(rec.get('confidence') or 0.0)
+        except Exception:
+            cval = 0.0
+        try:
+            pt = float(rec.get('processing_time') or 0.0)
+        except Exception:
+            pt = 0.0
+        c.drawString(txt_x, txt_y + 14, f"ID: {rec['id']}  Predicted: {rec.get('predicted')} ({cval:.2f}%)")
+        c.drawString(txt_x, txt_y, f"Correct: {bool(rec.get('correct'))}  Time: {pt:.3f}s")
 
-    def get_image_path(self, prediction_id, image_data):
-        """Get or create temporary image file path"""
-        temp_path = os.path.join(self.img_dir, f"prediction_{prediction_id}.jpg")
-        if not os.path.exists(temp_path):
-            return self.save_temp_image(image_data, prediction_id)
-        return temp_path
+    idx = 0
+    for i, rec in enumerate(recs):
+        page_idx = idx // items_per_page
+        pos_idx = idx % items_per_page
+        if pos_idx == 0 and idx != 0:
+            c.showPage()
+        draw_record_at(rec, page_idx, pos_idx)
+        idx += 1
 
-    def save_prediction(self, image_path, brand, confidence):
-        # First check if image contains a car
-        has_car, det_conf = self.car_detector.detect_car(image_path)
-        
-        if not has_car:
-            raise ValueError("Brak auta na zdjęciu!")
+    # do not add an extra blank page at the end
+    c.save()
+    return out_pdf_path
 
-        # Read and process the image
-        with Image.open(image_path) as img:
-            img = img.convert('RGB')
-            img.thumbnail((300, 300))  # Resize for storage
-            img_byte_arr = io.BytesIO()
-            img.save(img_byte_arr, format='JPEG', quality=95)
-            img_byte_arr = img_byte_arr.getvalue()
 
-        with sqlite3.connect(self.db_file) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO predictions (timestamp, image_data, brand, confidence, is_bad_prediction)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (datetime.now(), img_byte_arr, brand, confidence, False))
-            conn.commit()
-            new_id = cursor.lastrowid
-            
-            # Save image file right away
-            self.save_temp_image(img_byte_arr, new_id)
-            return new_id
+def update_record_correct(rid, correct, db_path=None):
+    """Update the 'correct' flag for a record."""
+    dbp = str(db_path or DB_NAME)
+    conn = sqlite3.connect(dbp)
+    cur = conn.cursor()
+    cur.execute('UPDATE records SET correct=? WHERE id=?', (int(bool(correct)), rid))
+    conn.commit()
+    conn.close()
+    return True
 
-    def get_all_predictions(self, descending=True):
-        order = 'DESC' if descending else 'ASC'
-        with sqlite3.connect(self.db_file) as conn:
-            cursor = conn.cursor()
-            predictions = cursor.execute(f'SELECT * FROM predictions ORDER BY timestamp {order}').fetchall()
-            # Create or get image files for each prediction
-            result = []
-            for pred in predictions:
-                pred_id = pred[0]
-                timestamp = pred[1]
-                image_data = pred[2]
-                brand = pred[3]
-                confidence = pred[4]
-                is_bad = pred[5]
-                
-                # Get image path
-                temp_path = self.get_image_path(pred_id, image_data)
-                
-                # Ensure confidence is a float
-                try:
-                    confidence = float(confidence)
-                except (TypeError, ValueError):
-                    confidence = 0.0
-                    
-                # Create a new tuple with properly formatted data
-                result.append((
-                    pred_id,
-                    timestamp,
-                    temp_path,
-                    brand,
-                    confidence,
-                    bool(is_bad)
-                ))
-            return result
+def export_records_table_pdf(rids, out_pdf_path, db_path=None):
+    """Export multiple records into a single PDF as a clean, paginated table.
 
-    def init_database(self):
-        with sqlite3.connect(self.db_file) as conn:
-            cursor = conn.cursor()
-            # Remove image_path column as we'll store and handle images directly
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS predictions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp DATETIME,
-                    image_data BLOB,
-                    brand TEXT,
-                    confidence REAL,
-                    is_bad_prediction BOOLEAN DEFAULT 0
-                )
-            ''')
-            conn.commit()
+    Columns: ID, Predykcja, Pewność (%), Poprawny, Czas (s), Znacznik czasu
+    Uses ReportLab Platypus for automatic pagination and header repetition.
+    """
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.utils import ImageReader
+        from reportlab.lib.units import mm
+    except Exception:
+        raise RuntimeError('reportlab is required to export PDF')
 
-    def mark_prediction_as_bad(self, prediction_id, is_bad=True):
-        with sqlite3.connect(self.db_file) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE predictions 
-                SET is_bad_prediction = ?
-                WHERE id = ?
-            ''', (is_bad, prediction_id))
-            conn.commit()
+    recs = []
+    for rid in rids:
+        r = get_record(rid, db_path=db_path)
+        if r:
+            recs.append(r)
+    if not recs:
+        raise ValueError('No valid records to export')
+
+    doc = SimpleDocTemplate(out_pdf_path, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    story = []
+
+    title = Paragraph('Historia predykcji – eksport (z miniaturami)', styles['Heading2'])
+    story.append(title)
+    story.append(Spacer(1, 8))
+
+    data = [[
+        'Obraz', 'ID', 'Predykcja', 'Pewność (%)', 'Poprawny', 'Czas (s)', 'Znacznik czasu'
+    ]]
+    thumb_w = 28 * mm
+    thumb_h = 20 * mm
+    for rec in recs:
+        try:
+            cval = float(rec.get('confidence') or 0.0)
+        except Exception:
+            cval = 0.0
+        try:
+            pt = float(rec.get('processing_time') or 0.0)
+        except Exception:
+            pt = 0.0
+        try:
+            import datetime
+            ts = rec.get('timestamp')
+            ts_val = int(ts) if ts is not None else 0
+            dt = datetime.datetime.fromtimestamp(ts_val).strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            dt = ''
+        ok = 'TAK' if bool(rec.get('correct')) else 'NIE'
+        # build thumbnail from saved_image (temp) or fallback to image_path
+        img_path = rec.get('saved_image') or rec.get('image_path')
+        thumb = Paragraph('—', styles['Normal'])
+        if img_path and os.path.isfile(img_path):
+            try:
+                ir = ImageReader(img_path)
+                iw, ih = ir.getSize()
+                scale = min(thumb_w / iw, thumb_h / ih)
+                tw = max(1, iw * scale)
+                th = max(1, ih * scale)
+                thumb = RLImage(img_path, width=tw, height=th)
+            except Exception:
+                pass
+        data.append([
+            thumb,
+            str(rec.get('id') or ''),
+            str(rec.get('predicted') or ''),
+            f"{cval:.2f}",
+            ok,
+            f"{pt:.3f}",
+            dt,
+        ])
+
+    table = Table(data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e7f2ff')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#0b1f44')),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.HexColor('#f8fafc')]),
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#cbd5e1')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (0, 1), (0, -1), 'CENTER'),  # image column center
+        ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+
+    story.append(table)
+    doc.build(story)
+    return out_pdf_path
+
+
+def delete_records(rids, db_path=None, remove_images=True):
+    """Delete records by IDs. Optionally remove saved images from IMAGE_DIR.
+
+    Returns number of deleted rows.
+    """
+    if not rids:
+        return 0
+    dbp = str(db_path or DB_NAME)
+    conn = sqlite3.connect(dbp)
+    cur = conn.cursor()
+    deleted = 0
+    try:
+        if remove_images:
+            # fetch saved_image paths first
+            q_marks = ",".join(["?"] * len(rids))
+            cur.execute(f"SELECT saved_image FROM records WHERE id IN ({q_marks})", tuple(rids))
+            rows = cur.fetchall()
+            for (p,) in rows:
+                if p and isinstance(p, str) and os.path.isfile(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+        q_marks = ",".join(["?"] * len(rids))
+        cur.execute(f"DELETE FROM records WHERE id IN ({q_marks})", tuple(rids))
+        deleted = cur.rowcount if hasattr(cur, 'rowcount') else len(rids)
+        conn.commit()
+    finally:
+        conn.close()
+    return deleted
